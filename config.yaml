@@ -15,7 +15,7 @@ cache:
   ttl: 3600
 content:
   index:
-    enabled: false
+    enabled: true
     driver: sqlite
     path: cache/content-index.sqlite
 security:

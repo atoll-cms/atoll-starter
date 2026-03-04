@@ -64,10 +64,24 @@ final class MediaManager
         $generated = [];
 
         try {
+            $driver = 'gd';
             $manager = ImageManager::gd();
+            if (class_exists(\Imagick::class)) {
+                try {
+                    $manager = ImageManager::imagick();
+                    $driver = 'imagick';
+                } catch (\Throwable) {
+                    $manager = ImageManager::gd();
+                    $driver = 'gd';
+                }
+            }
+
             $image = $manager->read($path);
             $widths = [480, 960, 1600];
-            $ext = pathinfo($path, PATHINFO_EXTENSION);
+            $ext = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
+            if ($ext === '') {
+                $ext = 'jpg';
+            }
             $base = substr($path, 0, -(strlen($ext) + 1));
 
             foreach ($widths as $width) {
@@ -77,15 +91,56 @@ final class MediaManager
                 $clone->save($jpgPath);
                 $generated[] = str_replace($this->uploadRoot, '/assets/uploads', $jpgPath);
 
-                $webpPath = sprintf('%s-%d.webp', $base, $width);
-                $clone->toWebp(quality: 80)->save($webpPath);
-                $generated[] = str_replace($this->uploadRoot, '/assets/uploads', $webpPath);
+                if ($this->supportsFormat('webp', $driver) && is_callable([$clone, 'toWebp'])) {
+                    try {
+                        $webpPath = sprintf('%s-%d.webp', $base, $width);
+                        $webpClone = clone $clone;
+                        $webpClone->toWebp(quality: 80)->save($webpPath);
+                        $generated[] = str_replace($this->uploadRoot, '/assets/uploads', $webpPath);
+                    } catch (\Throwable) {
+                        // best effort only
+                    }
+                }
+
+                if ($this->supportsFormat('avif', $driver) && is_callable([$clone, 'toAvif'])) {
+                    try {
+                        $avifPath = sprintf('%s-%d.avif', $base, $width);
+                        $avifClone = clone $clone;
+                        $avifClone->toAvif(quality: 62)->save($avifPath);
+                        $generated[] = str_replace($this->uploadRoot, '/assets/uploads', $avifPath);
+                    } catch (\Throwable) {
+                        // best effort only
+                    }
+                }
             }
         } catch (\Throwable) {
             // best effort only
         }
 
         return $generated;
+    }
+
+    private function supportsFormat(string $format, string $driver): bool
+    {
+        $format = strtolower($format);
+        if ($driver === 'gd') {
+            return match ($format) {
+                'webp' => function_exists('imagewebp'),
+                'avif' => function_exists('imageavif'),
+                default => false,
+            };
+        }
+
+        if ($driver === 'imagick' && class_exists(\Imagick::class)) {
+            try {
+                $formats = \Imagick::queryFormats(strtoupper($format));
+                return is_array($formats) && $formats !== [];
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     private function isImage(string $path): bool

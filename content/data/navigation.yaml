@@ -4,5 +4,7 @@
   url: /about
 - label: Blog
   url: /blog
+- label: Shop
+  url: /shop
 - label: Kontakt
   url: /contact

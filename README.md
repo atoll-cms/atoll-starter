@@ -61,9 +61,9 @@ php bin/atoll dev 8080
 Alternativen:
 - `php bin/atoll dev 8080` startet Watch-Mode fuer Frontend-Bundles (z. B. `core/admin-src`, aktive Theme-/Plugin-`islands-src`) und den PHP-Server.
 - `php bin/atoll serve 8080` baut Frontend-Bundles einmalig und startet dann den PHP-Server.
-- `php bin/atoll dev:local 8080 --activate=business` verlinkt lokale Sibling-Repos fuer Core/Plugins (`../atoll-core`, `../atoll-plugin-*`) und startet danach den Dev-Server.
-- In `dev:local` werden Registry-Theme-Installationen nur fuer diesen laufenden Prozess bevorzugt als lokale Symlinks auf `../atoll-theme-<id>` angelegt (Live-Aenderungen ohne Reinstall). `dev` bleibt Registry-only.
-- `composer dev-local -- --setup-only` richtet nur die lokalen Links ein (ohne Serverstart).
+- `php bin/atoll dev:local 8080 --activate=business` nutzt das lokale Core-Sibling-Repo (`../atoll-core`) und startet danach den Dev-Server.
+- In `dev:local` werden Registry-Installationen von Themes/Plugins fuer diesen laufenden Prozess bevorzugt als lokale Symlinks auf `../atoll-theme-<id>` bzw. `../atoll-plugin-<id>` angelegt (Live-Aenderungen ohne Reinstall). `dev` bleibt Registry-only.
+- `composer dev-local -- --setup-only` setzt nur den lokalen Core-Pfad (ohne Serverstart).
 - In `environment: dev` ist HTML-Cache standardmaessig deaktiviert, damit Theme-/Template-Aenderungen sofort sichtbar sind. Optional wieder aktivierbar mit `cache.dev_enabled: true`.
 
 3. Frontend/Admin:

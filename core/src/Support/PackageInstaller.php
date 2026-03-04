@@ -35,17 +35,7 @@ final class PackageInstaller
             self::copyDirectory($sourceDir, $dest);
         }
 
-        if ($enable) {
-            $stateFile = rtrim($root, '/') . '/content/data/plugins.yaml';
-            $state = is_file($stateFile) ? Yaml::parse((string) file_get_contents($stateFile)) : [];
-            $state = is_array($state) ? $state : [];
-            $state[$id] = true;
-
-            if (!is_dir(dirname($stateFile))) {
-                mkdir(dirname($stateFile), 0775, true);
-            }
-            file_put_contents($stateFile, Yaml::dump($state));
-        }
+        self::applyPluginEnabledState($root, $id, $enable);
 
         return [
             'ok' => true,
@@ -98,6 +88,12 @@ final class PackageInstaller
         bool $enable = true,
         array $config = []
     ): array {
+        $normalizedId = self::normalizePackageId($id);
+        $localPlugin = self::resolveLocalPluginRepository($root, $normalizedId, $config);
+        if ($localPlugin !== null) {
+            return self::linkPluginFromLocalRepository($root, $normalizedId, $localPlugin, $force, $enable);
+        }
+
         $entry = self::findRegistryEntry(rtrim($root, '/') . '/content/data/plugin-registry.json', $id);
         $source = (string) ($entry['source'] ?? '');
         if ($source === '') {
@@ -312,6 +308,112 @@ final class PackageInstaller
         }
 
         return rtrim($real, '/');
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    private static function resolveLocalPluginRepository(string $root, string $id, array $config): ?string
+    {
+        $envEnabled = getenv('ATOLL_DEV_LOCAL');
+        if (!is_string($envEnabled) || trim($envEnabled) === '') {
+            return null;
+        }
+        $envEnabledNormalized = strtolower(trim($envEnabled));
+        if (in_array($envEnabledNormalized, ['0', 'false', 'off', 'no'], true)) {
+            return null;
+        }
+
+        $workspaceEnv = getenv('ATOLL_DEV_LOCAL_WORKSPACE');
+        $workspace = is_string($workspaceEnv) && trim($workspaceEnv) !== '' ? $workspaceEnv : '..';
+        if ($workspace === '') {
+            $workspace = '..';
+        }
+
+        $workspacePath = str_starts_with($workspace, '/')
+            ? rtrim($workspace, '/')
+            : rtrim($root, '/') . '/' . ltrim($workspace, '/');
+
+        $candidate = rtrim($workspacePath, '/') . '/atoll-plugin-' . $id;
+        $real = realpath($candidate);
+        if ($real === false || !is_dir($real) || !is_file($real . '/plugin.php')) {
+            return null;
+        }
+
+        return rtrim($real, '/');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function linkPluginFromLocalRepository(
+        string $root,
+        string $id,
+        string $sourceDir,
+        bool $force,
+        bool $enable
+    ): array {
+        $dest = rtrim($root, '/') . '/plugins/' . $id;
+        if (!is_dir(dirname($dest))) {
+            mkdir(dirname($dest), 0775, true);
+        }
+
+        if (is_link($dest)) {
+            $current = realpath($dest);
+            if ($current !== false && $current === $sourceDir) {
+                self::applyPluginEnabledState($root, $id, $enable);
+                return [
+                    'ok' => true,
+                    'id' => $id,
+                    'path' => $dest,
+                    'enabled' => $enable,
+                    'linked' => true,
+                    'link_target' => $sourceDir,
+                ];
+            }
+
+            if (!$force) {
+                throw new RuntimeException("Plugin already exists: {$id} (use --force to overwrite)");
+            }
+            @unlink($dest);
+        } elseif (file_exists($dest)) {
+            if (!$force) {
+                throw new RuntimeException("Plugin already exists: {$id} (use --force to overwrite)");
+            }
+            self::prepareDestination($dest, true, '');
+        }
+
+        if (!symlink($sourceDir, $dest)) {
+            throw new RuntimeException("Could not create symlink for plugin '{$id}'");
+        }
+
+        self::applyPluginEnabledState($root, $id, $enable);
+
+        return [
+            'ok' => true,
+            'id' => $id,
+            'path' => $dest,
+            'enabled' => $enable,
+            'linked' => true,
+            'link_target' => $sourceDir,
+        ];
+    }
+
+    private static function applyPluginEnabledState(string $root, string $id, bool $enable): void
+    {
+        if (!$enable) {
+            return;
+        }
+
+        $stateFile = rtrim($root, '/') . '/content/data/plugins.yaml';
+        $state = is_file($stateFile) ? Yaml::parse((string) file_get_contents($stateFile)) : [];
+        $state = is_array($state) ? $state : [];
+        $state[$id] = true;
+
+        if (!is_dir(dirname($stateFile))) {
+            mkdir(dirname($stateFile), 0775, true);
+        }
+        file_put_contents($stateFile, Yaml::dump($state));
     }
 
     /**

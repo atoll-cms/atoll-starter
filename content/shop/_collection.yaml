@@ -1,24 +1,26 @@
 name: Shop
 slug_from: filename
 sort: title asc
-per_page: 24
 
 schema:
   title:
     type: string
     required: true
   price:
-    type: string
+    type: number
     required: true
   currency:
     type: string
     default: EUR
+  sku:
+    type: string
+  stock:
+    type: number
   excerpt:
     type: text
-    max_length: 300
-  stock:
-    type: string
+    max_length: 280
+  image:
+    type: image
   draft:
     type: boolean
     default: false
-

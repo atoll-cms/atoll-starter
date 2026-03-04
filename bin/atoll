@@ -24,7 +24,7 @@ $printHelp = static function (): void {
     echo "Commands:\n";
     echo "  atoll serve [port]                               Build frontend bundles once, then start server\n";
     echo "  atoll dev [port]                                 Watch frontend bundles and start server\n";
-    echo "  atoll dev:local [port] [--activate=<id>]         Link sibling repos (core/plugins), start dev\n";
+    echo "  atoll dev:local [port] [--activate=<id>]         Use sibling core repo, start dev\n";
     echo "                   [--force-links] [--setup-only]\n";
     echo "  atoll cache:clear                                Clear HTML cache\n";
     echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
@@ -373,7 +373,11 @@ switch ($command) {
             fail($e->getMessage());
         }
 
-        echo "Plugin installed from registry: " . $result['id'] . "\n";
+        if (($result['linked'] ?? false) === true) {
+            echo "Plugin linked from local repository: " . $result['id'] . "\n";
+        } else {
+            echo "Plugin installed from registry: " . $result['id'] . "\n";
+        }
         if (($result['enabled'] ?? false) === true) {
             echo "Plugin enabled: " . $result['id'] . "\n";
         }
@@ -586,7 +590,7 @@ function setupLocalDevWorkspace(
         unset($config['dev_local']);
         $configChanged = true;
     }
-    $messages[] = 'Dev-local runtime mode enabled for this process (registry installs prefer local sibling themes).';
+    $messages[] = 'Dev-local runtime mode enabled for this process (registry installs prefer local sibling themes/plugins).';
 
     $coreCandidate = rtrim($workspaceRoot, '/') . '/atoll-core';
     if (is_dir($coreCandidate)) {
@@ -605,18 +609,6 @@ function setupLocalDevWorkspace(
     } else {
         $messages[] = "No sibling core repo found at {$coreCandidate}.";
     }
-
-    $messages = array_merge(
-        $messages,
-        linkSiblingRepositories(
-            globPattern: rtrim($workspaceRoot, '/') . '/atoll-plugin-*',
-            namePrefix: 'atoll-plugin-',
-            destinationRoot: rtrim($root, '/') . '/plugins',
-            projectRoot: $root,
-            kind: 'plugin',
-            forceLinks: $forceLinks
-        )
-    );
 
     if ($activateTheme !== null && $activateTheme !== '') {
         $themeId = normalizePackageId($activateTheme);
@@ -698,95 +690,6 @@ function setupLocalDevWorkspace(
     }
 
     return $messages;
-}
-
-/**
- * @return array<int, string>
- */
-function linkSiblingRepositories(
-    string $globPattern,
-    string $namePrefix,
-    string $destinationRoot,
-    string $projectRoot,
-    string $kind,
-    bool $forceLinks
-): array {
-    $messages = [];
-    $sources = glob($globPattern, GLOB_ONLYDIR) ?: [];
-    sort($sources, SORT_STRING);
-    if ($sources === []) {
-        return $messages;
-    }
-
-    if (!is_dir($destinationRoot)) {
-        mkdir($destinationRoot, 0775, true);
-    }
-
-    foreach ($sources as $source) {
-        $baseName = basename($source);
-        if (!str_starts_with($baseName, $namePrefix)) {
-            continue;
-        }
-
-        $id = normalizePackageId(substr($baseName, strlen($namePrefix)));
-        if ($id === '') {
-            continue;
-        }
-
-        $target = rtrim($destinationRoot, '/') . '/' . $id;
-        $messages[] = linkLocalRepository($source, $target, $projectRoot, $kind, $id, $forceLinks);
-    }
-
-    return $messages;
-}
-
-function linkLocalRepository(
-    string $source,
-    string $target,
-    string $projectRoot,
-    string $kind,
-    string $id,
-    bool $forceLinks
-): string {
-    $sourceReal = realpath($source);
-    if ($sourceReal === false) {
-        return "Skip {$kind} '{$id}' (source not readable: {$source}).";
-    }
-
-    if (!is_dir(dirname($target))) {
-        mkdir(dirname($target), 0775, true);
-    }
-
-    if (is_link($target)) {
-        $currentReal = realpath($target);
-        if ($currentReal !== false && $currentReal === $sourceReal) {
-            return "Linked {$kind} '{$id}' already up to date.";
-        }
-
-        if (!$forceLinks) {
-            return "Skip {$kind} '{$id}' (symlink exists, use --force-links to replace).";
-        }
-
-        unlink($target);
-    } elseif (file_exists($target)) {
-        if (!$forceLinks) {
-            return "Skip {$kind} '{$id}' (path exists, use --force-links to replace).";
-        }
-
-        $backupDir = rtrim($projectRoot, '/') . '/backups/dev-local-conflicts';
-        if (!is_dir($backupDir)) {
-            mkdir($backupDir, 0775, true);
-        }
-
-        $backupPath = createUniqueBackupPath($backupDir, $kind . '-' . $id, '.bak');
-        rename($target, $backupPath);
-    }
-
-    if (!symlink($sourceReal, $target)) {
-        fail("Could not create symlink for {$kind} '{$id}' -> {$sourceReal}");
-    }
-
-    return "Linked {$kind} '{$id}' -> {$sourceReal}";
 }
 
 /**

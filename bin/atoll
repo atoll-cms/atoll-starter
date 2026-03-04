@@ -24,7 +24,7 @@ $printHelp = static function (): void {
     echo "Commands:\n";
     echo "  atoll serve [port]                               Build frontend bundles once, then start server\n";
     echo "  atoll dev [port]                                 Watch frontend bundles and start server\n";
-    echo "  atoll dev:local [port] [--activate=<id>]         Link sibling repos (core/themes/plugins) and start dev\n";
+    echo "  atoll dev:local [port] [--activate=<id>]         Link sibling repos (core/plugins), start dev\n";
     echo "                   [--force-links] [--setup-only]\n";
     echo "  atoll cache:clear                                Clear HTML cache\n";
     echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
@@ -609,18 +609,6 @@ function setupLocalDevWorkspace(
     $messages = array_merge(
         $messages,
         linkSiblingRepositories(
-            globPattern: rtrim($workspaceRoot, '/') . '/atoll-theme-*',
-            namePrefix: 'atoll-theme-',
-            destinationRoot: rtrim($root, '/') . '/themes',
-            projectRoot: $root,
-            kind: 'theme',
-            forceLinks: $forceLinks
-        )
-    );
-
-    $messages = array_merge(
-        $messages,
-        linkSiblingRepositories(
             globPattern: rtrim($workspaceRoot, '/') . '/atoll-plugin-*',
             namePrefix: 'atoll-plugin-',
             destinationRoot: rtrim($root, '/') . '/plugins',
@@ -657,7 +645,50 @@ function setupLocalDevWorkspace(
                 $messages[] = "Theme '{$themeId}' already active in config.";
             }
         } else {
-            $messages[] = "Theme '{$themeId}' not found after linking. Activation skipped.";
+            $messages[] = "Theme '{$themeId}' is not installed; trying registry install (dev-local aware).";
+            $previousDevLocal = getenv('ATOLL_DEV_LOCAL');
+            $previousWorkspace = getenv('ATOLL_DEV_LOCAL_WORKSPACE');
+            putenv('ATOLL_DEV_LOCAL=1');
+            putenv('ATOLL_DEV_LOCAL_WORKSPACE=' . $workspaceRoot);
+
+            try {
+                PackageInstaller::installThemeFromRegistry($root, $themeId, $forceLinks, $config);
+                $messages[] = "Installed theme '{$themeId}'.";
+            } catch (Throwable $e) {
+                $messages[] = "Theme '{$themeId}' install failed: " . $e->getMessage();
+            } finally {
+                if ($previousDevLocal === false) {
+                    putenv('ATOLL_DEV_LOCAL');
+                } else {
+                    putenv('ATOLL_DEV_LOCAL=' . $previousDevLocal);
+                }
+
+                if ($previousWorkspace === false) {
+                    putenv('ATOLL_DEV_LOCAL_WORKSPACE');
+                } else {
+                    putenv('ATOLL_DEV_LOCAL_WORKSPACE=' . $previousWorkspace);
+                }
+            }
+
+            $corePath = resolveCorePath($root, $config);
+            foreach (listAvailableThemes($root, $corePath) as $theme) {
+                if (($theme['id'] ?? '') !== $themeId) {
+                    continue;
+                }
+
+                $appearance = Config::get($config, 'appearance', []);
+                $appearance = is_array($appearance) ? $appearance : [];
+                $appearance['theme'] = $themeId;
+                $config['appearance'] = $appearance;
+                $configChanged = true;
+                $messages[] = "Activated theme '{$themeId}' in config.";
+                $themeExists = true;
+                break;
+            }
+
+            if (!$themeExists) {
+                $messages[] = "Theme '{$themeId}' still unavailable. Activation skipped.";
+            }
         }
     }
 

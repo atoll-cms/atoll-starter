@@ -82,6 +82,65 @@ Hinweis:
 - `session.enabled: false` deaktiviert Login/CSRF-basierte Funktionen.
 - Fuer gemischte Sites empfiehlt sich `session.enabled: true`; Public GET-Seiten starten dank lazy session ohnehin keine Session mehr.
 
+### Backups (lokal + S3/SFTP)
+
+Backups lassen sich im Admin unter `Settings` ausloesen und konfigurieren.
+`local` bleibt aktiv; `s3` und `sftp` sind optional und koennen parallel genutzt werden.
+
+```yaml
+backup:
+  targets:
+    local:
+      enabled: true
+    s3:
+      enabled: false
+      endpoint: https://s3.eu-central-1.amazonaws.com
+      region: eu-central-1
+      bucket: my-bucket
+      access_key: ''
+      secret_key: ''
+      prefix: atoll-backups
+      path_style: true
+    sftp:
+      enabled: false
+      host: backup.example.com
+      port: 22
+      username: backup
+      password: ''
+      private_key_file: ''
+      public_key_file: ''
+      passphrase: ''
+      path: /backups/atoll
+```
+
+Wenn ein Remote-Upload fehlschlaegt, bleibt das lokale ZIP erhalten (`partial`-Status mit Fehlerdetails).
+
+### Formulare: Anti-Spam und optionales CAPTCHA
+
+Der Core validiert standardmaessig CSRF + Honeypot und unterstuetzt zusaetzlich:
+- Timing-Check (`min_seconds`)
+- Link-Limit (`max_links`)
+- optionale Blocklisten (`blocked_phrases`, `disposable_domains`)
+- optionales CAPTCHA (Turnstile, hCaptcha, reCAPTCHA)
+
+Beispiel in `content/forms/contact.yaml`:
+
+```yaml
+anti_spam:
+  min_seconds: 2
+  timestamp_field: _atoll_ts
+  max_links: 2
+
+captcha:
+  enabled: false
+  provider: turnstile
+  token_field: captcha_token
+  secret: env:ATOLL_TURNSTILE_SECRET
+```
+
+Globale Defaults sind in `config.yaml` unter `security.forms.*` definierbar.
+Im Default-Theme wird das CAPTCHA automatisch eingebunden, sobald `security.forms.captcha.enabled` plus `site_key` gesetzt sind.
+
 3. Frontend/Admin:
 - [http://localhost:8080](http://localhost:8080)
 - [http://localhost:8080/admin](http://localhost:8080/admin)

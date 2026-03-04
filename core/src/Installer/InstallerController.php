@@ -98,6 +98,41 @@ final class InstallerController
                 'enabled' => true,
                 'ttl' => 3600,
             ],
+            'content' => [
+                'index' => [
+                    'enabled' => true,
+                    'driver' => 'sqlite',
+                    'path' => 'cache/content-index.sqlite',
+                ],
+            ],
+            'backup' => [
+                'targets' => [
+                    'local' => [
+                        'enabled' => true,
+                    ],
+                    's3' => [
+                        'enabled' => false,
+                        'endpoint' => '',
+                        'region' => 'eu-central-1',
+                        'bucket' => '',
+                        'access_key' => '',
+                        'secret_key' => '',
+                        'prefix' => 'atoll-backups',
+                        'path_style' => true,
+                    ],
+                    'sftp' => [
+                        'enabled' => false,
+                        'host' => '',
+                        'port' => 22,
+                        'username' => '',
+                        'password' => '',
+                        'private_key_file' => '',
+                        'public_key_file' => '',
+                        'passphrase' => '',
+                        'path' => '/backups/atoll',
+                    ],
+                ],
+            ],
             'security' => [
                 'force_https' => false,
                 'hsts' => false,
@@ -121,6 +156,26 @@ final class InstallerController
                     'require_lowercase' => true,
                     'require_digit' => true,
                     'require_special' => true,
+                ],
+                'forms' => [
+                    'anti_spam' => [
+                        'min_seconds' => 2,
+                        'timestamp_field' => '_atoll_ts',
+                        'require_timestamp' => false,
+                        'max_links' => 3,
+                        'blocked_phrases' => [],
+                        'disposable_domains' => [],
+                        'email_field' => 'email',
+                        'require_user_agent' => false,
+                    ],
+                    'captcha' => [
+                        'enabled' => false,
+                        'provider' => 'turnstile',
+                        'site_key' => '',
+                        'secret' => '',
+                        'token_field' => 'captcha_token',
+                        'minimum_score' => 0.5,
+                    ],
                 ],
             ],
             'smtp' => [

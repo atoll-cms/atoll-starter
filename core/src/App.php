@@ -109,7 +109,14 @@ final class App
         );
         $redirects = new RedirectManager($this->root . '/content/data/redirects.yaml');
         $mailer = new Mailer($this->config);
-        $forms = new FormManager($this->root . '/content/forms', $this->root . '/content/forms-submissions', $mailer, $security, $hooks);
+        $forms = new FormManager(
+            $this->root . '/content/forms',
+            $this->root . '/content/forms-submissions',
+            $mailer,
+            $security,
+            $hooks,
+            $this->config
+        );
         $seo = new SeoManager($this->config);
 
         $activeTheme = (string) Config::get($this->config, 'appearance.theme', 'default');
@@ -143,7 +150,7 @@ final class App
         );
 
         $media = new MediaManager($this->root . '/assets/uploads', $hooks);
-        $backup = new BackupManager($this->root . '/content', $this->root . '/backups');
+        $backup = new BackupManager($this->root . '/content', $this->root . '/backups', $this->config);
 
         $admin = new AdminController(
             root: $this->root,

@@ -1,5 +1,15 @@
 honeypot: website
 success_message: Vielen Dank, wir melden uns.
+anti_spam:
+  min_seconds: 2
+  timestamp_field: _atoll_ts
+  max_links: 2
+
+captcha:
+  enabled: false
+  provider: turnstile
+  token_field: captcha_token
+  # secret: env:ATOLL_TURNSTILE_SECRET
 
 fields:
   name:

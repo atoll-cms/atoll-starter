@@ -1,11 +1,24 @@
 {% extends 'layouts/base.twig' %}
 
 {% block content %}
+  {% set captcha = site.security.forms.captcha ?? {} %}
   <h1>{{ page.title }}</h1>
   <article class="prose">{{ page.content|raw }}</article>
 
   <section>
     <h2>Kontaktformular</h2>
-    {{ island('ContactForm', { client: 'visible', props: { endpoint: url('/forms/contact'), csrf: csrf_token() } })|raw }}
+    {{ island('ContactForm', {
+      client: 'visible',
+      props: {
+        endpoint: url('/forms/contact'),
+        csrf: csrf_token(),
+        captcha: {
+          enabled: captcha.enabled ?? false,
+          provider: captcha.provider ?? 'turnstile',
+          siteKey: captcha.site_key ?? '',
+          tokenField: captcha.token_field ?? 'captcha_token'
+        }
+      }
+    })|raw }}
   </section>
 {% endblock %}

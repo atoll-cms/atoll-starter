@@ -8,6 +8,7 @@ use Atoll\Backup\BackupManager;
 use Atoll\Cache\CacheManager;
 use Atoll\Content\ContentRepository;
 use Atoll\Content\ValidationException;
+use Atoll\Hooks\HookManager;
 use Atoll\Http\Request;
 use Atoll\Http\Response;
 use Atoll\Media\MediaManager;
@@ -29,6 +30,7 @@ final class AdminController
         private readonly string $configPath,
         private array $config,
         private readonly array $adminRoots,
+        private readonly HookManager $hooks,
         private readonly SecurityManager $security,
         private readonly ContentRepository $content,
         private readonly CacheManager $cache,
@@ -113,6 +115,8 @@ final class AdminController
                     'twofa_enabled' => $this->isCurrentUserTwoFactorEnabled(),
                 ],
             ]),
+            $endpoint === '/menu' && $request->method === 'GET' => $this->adminMenu(),
+            $endpoint === '/dashboard/widgets' && $request->method === 'GET' => $this->dashboardWidgets(),
             $endpoint === '/collections' && $request->method === 'GET' => Response::json([
                 'ok' => true,
                 'collections' => $this->content->collections(),
@@ -123,7 +127,7 @@ final class AdminController
             $endpoint === '/entry/delete' && $request->method === 'POST' => $this->deleteEntry($request),
             $endpoint === '/forms/submissions' && $request->method === 'GET' => $this->formSubmissions($request),
             $endpoint === '/cache/clear' && $request->method === 'POST' => $this->clearCache(),
-            $endpoint === '/backup/create' && $request->method === 'POST' => Response::json($this->backup->create()),
+            $endpoint === '/backup/create' && $request->method === 'POST' => $this->createBackup(),
             $endpoint === '/plugins' && $request->method === 'GET' => Response::json(['ok' => true, 'plugins' => $this->plugins->list()]),
             $endpoint === '/plugin-registry' && $request->method === 'GET' => $this->pluginRegistry(),
             $endpoint === '/theme-registry' && $request->method === 'GET' => $this->themeRegistry(),
@@ -186,6 +190,7 @@ final class AdminController
                 }
 
                 $this->security->login($username, $request);
+                $this->hooks->run('auth:login', $username, $request);
                 return Response::json([
                     'ok' => true,
                     'user' => $username,
@@ -212,6 +217,48 @@ final class AdminController
         return Response::json([
             'ok' => true,
             'entries' => array_map(static fn ($p) => $p->toArray(), $items),
+        ]);
+    }
+
+    private function adminMenu(): Response
+    {
+        $items = [];
+        $seen = [];
+        foreach ($this->hooks->run('admin:menu', $this->security->currentUser()) as $result) {
+            if (is_array($result) && array_is_list($result)) {
+                foreach ($result as $entry) {
+                    $this->appendAdminMenuItem($items, $seen, $entry);
+                }
+                continue;
+            }
+
+            $this->appendAdminMenuItem($items, $seen, $result);
+        }
+
+        return Response::json([
+            'ok' => true,
+            'items' => $items,
+        ]);
+    }
+
+    private function dashboardWidgets(): Response
+    {
+        $widgets = [];
+        $counter = 0;
+        foreach ($this->hooks->run('admin:dashboard', $this->security->currentUser()) as $result) {
+            if (is_array($result) && array_is_list($result)) {
+                foreach ($result as $widget) {
+                    $this->appendDashboardWidget($widgets, $widget, $counter);
+                }
+                continue;
+            }
+
+            $this->appendDashboardWidget($widgets, $result, $counter);
+        }
+
+        return Response::json([
+            'ok' => true,
+            'widgets' => $widgets,
         ]);
     }
 
@@ -293,6 +340,22 @@ final class AdminController
         return Response::json(['ok' => true]);
     }
 
+    private function createBackup(): Response
+    {
+        $result = $this->backup->create();
+        if (($result['ok'] ?? false) === true) {
+            $this->security->recordAudit('backup.create', [
+                'user' => $this->security->currentUser(),
+                'file' => $result['file'] ?? null,
+                'partial' => (bool) ($result['partial'] ?? false),
+                'errors' => $result['errors'] ?? [],
+                'uploads' => $result['uploads'] ?? [],
+            ]);
+        }
+
+        return Response::json($result);
+    }
+
     private function togglePlugin(Request $request): Response
     {
         $payload = $request->isJson() ? $request->json() : $request->post;
@@ -330,6 +393,7 @@ final class AdminController
                 'updater' => Config::get($this->config, 'updater', []),
                 'appearance' => Config::get($this->config, 'appearance', []),
                 'smtp' => Config::get($this->config, 'smtp', []),
+                'backup' => Config::get($this->config, 'backup', []),
                 'security' => Config::get($this->config, 'security', []),
             ],
         ]);
@@ -346,7 +410,7 @@ final class AdminController
 
         $previousTheme = (string) Config::get($this->config, 'appearance.theme', 'default');
 
-        foreach (['name', 'base_url', 'updater', 'appearance', 'smtp', 'security'] as $key) {
+        foreach (['name', 'base_url', 'updater', 'appearance', 'smtp', 'backup', 'security'] as $key) {
             if (array_key_exists($key, $settings)) {
                 $this->config[$key] = $settings[$key];
             }
@@ -831,6 +895,92 @@ final class AdminController
         $this->config['users'] = $users;
         Config::save($this->configPath, $this->config);
         return true;
+    }
+
+    /**
+     * @param array<int, array{id:string,label:string,route:string,icon:string}> $items
+     * @param array<string, bool> $seen
+     */
+    private function appendAdminMenuItem(array &$items, array &$seen, mixed $candidate): void
+    {
+        if (!is_array($candidate)) {
+            return;
+        }
+
+        $label = trim((string) ($candidate['label'] ?? ''));
+        $route = trim((string) ($candidate['route'] ?? ''));
+        if ($label === '' || $route === '') {
+            return;
+        }
+
+        $id = trim((string) ($candidate['id'] ?? ''));
+        if ($id === '') {
+            $slug = strtolower((string) preg_replace('/[^a-z0-9]+/i', '-', $label));
+            $slug = trim($slug, '-');
+            $id = $slug !== '' ? $slug : ('menu-' . (count($items) + 1));
+        }
+
+        if (isset($seen[$id])) {
+            return;
+        }
+        $seen[$id] = true;
+
+        $items[] = [
+            'id' => $id,
+            'label' => $label,
+            'route' => $route,
+            'icon' => trim((string) ($candidate['icon'] ?? '')),
+        ];
+    }
+
+    /**
+     * @param array<int, array{id:string,title:string,value:string,text:string}> $widgets
+     */
+    private function appendDashboardWidget(array &$widgets, mixed $candidate, int &$counter): void
+    {
+        if (is_string($candidate)) {
+            $text = trim($candidate);
+            if ($text === '') {
+                return;
+            }
+            $counter++;
+            $widgets[] = [
+                'id' => 'widget-' . $counter,
+                'title' => 'Plugin Widget',
+                'value' => '',
+                'text' => $text,
+            ];
+            return;
+        }
+
+        if (!is_array($candidate)) {
+            return;
+        }
+
+        $title = trim((string) ($candidate['title'] ?? $candidate['label'] ?? ''));
+        $value = trim((string) ($candidate['value'] ?? ''));
+        $text = trim((string) ($candidate['text'] ?? $candidate['description'] ?? ''));
+        if ($title === '' && $value === '' && $text === '') {
+            return;
+        }
+        if ($title === '') {
+            $title = 'Plugin Widget';
+        }
+
+        $id = trim((string) ($candidate['id'] ?? ''));
+        if ($id === '') {
+            $slug = strtolower((string) preg_replace('/[^a-z0-9]+/i', '-', $title));
+            $slug = trim($slug, '-');
+            $counter++;
+            $id = $slug !== '' ? $slug : ('widget-' . $counter);
+        }
+
+        $widgets[] = [
+            'id' => $id,
+            'title' => $title,
+            'value' => $value,
+            'text' => $text,
+        ];
     }
 
     private function resolveAdminFile(string $relative): string

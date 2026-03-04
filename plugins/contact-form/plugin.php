@@ -10,6 +10,14 @@ return [
         'admin:menu' => static function (): array {
             return ['label' => 'Forms', 'icon' => 'mail', 'route' => '/admin#forms'];
         },
+        'admin:dashboard' => static function (): array {
+            return [
+                'id' => 'forms-health',
+                'title' => 'Forms',
+                'value' => 'Live',
+                'text' => 'Kontaktformular-Tools sind aktiv.',
+            ];
+        },
     ],
     'routes' => [
         '/contact-form/ping' => static fn (): array => ['ok' => true, 'plugin' => 'contact-form'],

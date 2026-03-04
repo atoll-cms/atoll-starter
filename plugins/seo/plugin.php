@@ -23,6 +23,19 @@ return [
         'admin:menu' => static function (): array {
             return ['label' => 'SEO', 'icon' => 'search', 'route' => '/admin#seo'];
         },
+        'admin:dashboard' => static function (): array {
+            return [
+                'id' => 'seo-health',
+                'title' => 'SEO',
+                'value' => 'OK',
+                'text' => 'Sitemap und Robots sind aktiv.',
+            ];
+        },
+        'auth:login' => static function (string $username): void {
+            $log = dirname(__DIR__, 2) . '/cache/auth.log';
+            $line = '[' . date('c') . '] auth:login ' . $username . "\n";
+            file_put_contents($log, $line, FILE_APPEND);
+        },
     ],
     'routes' => [
         '/seo/health' => static function (): array {

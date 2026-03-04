@@ -1,0 +1,28 @@
+{
+  "name": "atoll/cms",
+  "description": "atoll-cms: flat-file PHP CMS with island architecture",
+  "type": "project",
+  "license": "MIT",
+  "require": {
+    "php": "^8.2",
+    "twig/twig": "^3.11",
+    "league/commonmark": "^2.6",
+    "symfony/yaml": "^7.2",
+    "symfony/routing": "^7.2",
+    "intervention/image": "^3.11",
+    "phpmailer/phpmailer": "^6.10",
+    "defuse/php-encryption": "^2.4"
+  },
+  "autoload": {
+    "psr-4": {
+      "Atoll\\": "core/src/"
+    }
+  },
+  "scripts": {
+    "post-install-cmd": [
+      "@php bin/atoll cache:clear"
+    ],
+    "serve": "@php bin/atoll serve",
+    "cache:clear": "@php bin/atoll cache:clear"
+  }
+}

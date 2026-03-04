@@ -1,0 +1,166 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Atoll\Plugins;
+
+use Atoll\Hooks\HookManager;
+use Atoll\Http\Request;
+use Atoll\Http\Response;
+use Atoll\Support\Yaml;
+
+final class PluginManager
+{
+    /** @var array<string, array<string, mixed>> */
+    private array $plugins = [];
+
+    /** @var array<string, mixed> */
+    private array $routes = [];
+
+    /** @var array<string, string> */
+    private array $islands = [];
+
+    /** @var array<string, bool> */
+    private array $state = [];
+
+    public function __construct(
+        private readonly string $pluginsDir,
+        private readonly string $stateFile,
+        private readonly HookManager $hooks,
+        private readonly bool $defaultsEnabled = true
+    ) {
+    }
+
+    public function load(): void
+    {
+        $this->state = $this->loadState();
+
+        if (!is_dir($this->pluginsDir)) {
+            return;
+        }
+
+        $dirs = glob($this->pluginsDir . '/*', GLOB_ONLYDIR) ?: [];
+        foreach ($dirs as $dir) {
+            $id = basename($dir);
+            $manifestPath = $dir . '/plugin.php';
+            if (!is_file($manifestPath)) {
+                continue;
+            }
+
+            /** @var mixed $manifest */
+            $manifest = require $manifestPath;
+            if (!is_array($manifest)) {
+                continue;
+            }
+
+            $active = $this->state[$id] ?? $this->defaultsEnabled;
+            $manifest['id'] = $id;
+            $manifest['active'] = $active;
+            $manifest['path'] = $dir;
+            $this->plugins[$id] = $manifest;
+
+            if (!$active) {
+                continue;
+            }
+
+            foreach (($manifest['hooks'] ?? []) as $hook => $handler) {
+                if (is_callable($handler)) {
+                    $this->hooks->register((string) $hook, $handler);
+                }
+            }
+
+            foreach (($manifest['routes'] ?? []) as $route => $handler) {
+                $this->routes[(string) $route] = $handler;
+            }
+
+            foreach (($manifest['islands'] ?? []) as $name => $relativePath) {
+                $path = rtrim($dir, '/') . '/' . ltrim((string) $relativePath, '/');
+                $publicPath = str_replace($this->pluginsDir, '/plugins', $path);
+                $this->islands[(string) $name] = $publicPath;
+            }
+        }
+    }
+
+    /** @return array<string, array<string, mixed>> */
+    public function all(): array
+    {
+        return $this->plugins;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public function list(): array
+    {
+        $rows = [];
+        foreach ($this->plugins as $id => $manifest) {
+            $rows[] = [
+                'id' => $id,
+                'name' => $manifest['name'] ?? $id,
+                'version' => $manifest['version'] ?? '0.0.0',
+                'active' => (bool) ($manifest['active'] ?? false),
+                'description' => $manifest['description'] ?? '',
+            ];
+        }
+
+        return $rows;
+    }
+
+    public function toggle(string $id, bool $active): void
+    {
+        $this->state[$id] = $active;
+        file_put_contents($this->stateFile, Yaml::dump($this->state));
+    }
+
+    public function hasRoute(string $path): bool
+    {
+        return array_key_exists($path, $this->routes);
+    }
+
+    public function dispatchRoute(Request $request): ?Response
+    {
+        $handler = $this->routes[$request->path] ?? null;
+        if ($handler === null) {
+            return null;
+        }
+
+        if (is_callable($handler)) {
+            $result = $this->invokeRouteHandler($handler, $request);
+            if ($result instanceof Response) {
+                return $result;
+            }
+            if (is_array($result)) {
+                return Response::json($result);
+            }
+            return Response::html((string) $result);
+        }
+
+        return Response::text('Plugin route handler is not callable', 500);
+    }
+
+    /** @return array<string, string> */
+    public function islandMap(): array
+    {
+        return $this->islands;
+    }
+
+    /** @return array<string, bool> */
+    private function loadState(): array
+    {
+        if (!is_file($this->stateFile)) {
+            return [];
+        }
+
+        $state = Yaml::parse((string) file_get_contents($this->stateFile));
+        return is_array($state) ? array_map(static fn ($v) => (bool) $v, $state) : [];
+    }
+
+    private function invokeRouteHandler(callable $handler, Request $request): mixed
+    {
+        if (is_array($handler) && isset($handler[0], $handler[1])) {
+            $reflection = new \ReflectionMethod($handler[0], $handler[1]);
+            return $reflection->getNumberOfParameters() > 0 ? $handler($request) : $handler();
+        }
+
+        $reflection = new \ReflectionFunction(\Closure::fromCallable($handler));
+        return $reflection->getNumberOfParameters() > 0 ? $handler($request) : $handler();
+    }
+}

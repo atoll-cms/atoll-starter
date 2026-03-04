@@ -1,0 +1,22 @@
+{% extends 'layouts/base.twig' %}
+
+{% block content %}
+  <h1>{{ page.title }}</h1>
+  <article class="prose">{{ page.content|raw }}</article>
+
+  <section class="grid-2">
+    <div class="card">
+      <h2>Zero JS by default</h2>
+      <p>Statisches HTML wird direkt ausgeliefert. Interaktivitaet nur als Island bei Bedarf.</p>
+    </div>
+    <div class="card">
+      <h2>Shared Hosting ready</h2>
+      <p>PHP 8.2+, kein Node auf dem Server, kein Build-Step im Betrieb.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Instant Search Island</h2>
+    {{ island('SearchWidget', { client: 'load', props: { placeholder: 'Suche Artikel...' } })|raw }}
+  </section>
+{% endblock %}

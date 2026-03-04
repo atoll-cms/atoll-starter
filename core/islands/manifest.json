@@ -1,0 +1,6 @@
+{
+  "SearchWidget": "/core/islands/dist/SearchWidget.js",
+  "ImageGallery": "/core/islands/dist/ImageGallery.js",
+  "TableOfContents": "/core/islands/dist/TableOfContents.js",
+  "ContactForm": "/core/islands/dist/ContactForm.js"
+}

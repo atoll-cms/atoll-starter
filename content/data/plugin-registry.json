@@ -1,0 +1,26 @@
+[
+  {
+    "id": "i18n",
+    "name": "i18n",
+    "type": "official",
+    "description": "Multi language routing and hreflang support"
+  },
+  {
+    "id": "analytics",
+    "name": "analytics",
+    "type": "official",
+    "description": "Consent-aware analytics integration"
+  },
+  {
+    "id": "forms-pro",
+    "name": "forms-pro",
+    "type": "official",
+    "description": "Advanced forms features"
+  },
+  {
+    "id": "shop",
+    "name": "shop",
+    "type": "official",
+    "description": "Lightweight ecommerce module"
+  }
+]

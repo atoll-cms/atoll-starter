@@ -1,0 +1,26 @@
+name: Blog
+slug_from: filename
+sort: date desc
+per_page: 10
+
+schema:
+  title:
+    type: string
+    required: true
+  date:
+    type: date
+    required: true
+  author:
+    type: string
+    default: Admin
+  tags:
+    type: list
+    of: string
+  featured_image:
+    type: image
+  excerpt:
+    type: text
+    max_length: 300
+  draft:
+    type: boolean
+    default: false

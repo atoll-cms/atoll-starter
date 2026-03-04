@@ -1,0 +1,14 @@
+{% extends 'layouts/base.twig' %}
+
+{% block content %}
+  <article>
+    <h1>{{ page.title }}</h1>
+    <p class="meta">{{ page.date }} · {{ page.author|default('Admin') }}</p>
+    <div class="prose">{{ page.content|raw }}</div>
+  </article>
+
+  <section>
+    <h2>Gallery Island</h2>
+    {{ island('ImageGallery', { client: 'idle', props: { images: page.gallery|default([]) } })|raw }}
+  </section>
+{% endblock %}

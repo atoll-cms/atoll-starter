@@ -1,0 +1,13 @@
+<header class="site-header">
+  <div class="container row">
+    <a class="brand" href="/">atoll-cms</a>
+    <nav>
+      <ul class="nav">
+        {% for item in navigation %}
+          <li><a href="{{ item.url }}">{{ item.label }}</a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+    <a class="admin-link" href="/admin">Admin</a>
+  </div>
+</header>

@@ -1,0 +1,8 @@
+/vendor/
+/cache/*.html
+/cache/*.json
+/cache/rate-limit/
+/backups/*.zip
+/releases/
+/config/updater-public.pem
+/.DS_Store

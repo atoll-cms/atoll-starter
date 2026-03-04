@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {{ page ? seo_meta(page) : '' }}
+    {{ hook('head:meta', page, site)|raw }}
+    {{ hook('head:scripts', page, site)|raw }}
+    <link rel="stylesheet" href="{{ theme_asset('main.css') }}">
+  </head>
+  <body>
+    {{ hook('body:start', page, site)|raw }}
+    {% include 'components/header.twig' %}
+    <main class="container">
+      {% block content %}{% endblock %}
+    </main>
+    {% include 'components/footer.twig' %}
+    {{ hook('body:end', page, site)|raw }}
+  </body>
+</html>

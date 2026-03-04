@@ -1,0 +1,14 @@
+{
+  "channel": "stable",
+  "generated_at": "2026-03-04T12:00:00Z",
+  "releases": [
+    {
+      "version": "0.2.0",
+      "artifact_url": "https://updates.example.com/atoll/atoll-core-0.2.0.zip",
+      "artifact_sha256": "b9a03f86f6f0a6f53d4e2797f40ce0633ef3b8ab7f2ea7e2b222f7f2349ff111",
+      "signature_payload": "atoll-core|0.2.0|b9a03f86f6f0a6f53d4e2797f40ce0633ef3b8ab7f2ea7e2b222f7f2349ff111",
+      "signature": "BASE64_RSA_SHA256_SIGNATURE",
+      "notes": "Core/site split, remote updater and migrations"
+    }
+  ]
+}

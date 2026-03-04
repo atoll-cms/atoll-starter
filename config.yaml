@@ -1,0 +1,50 @@
+name: atoll-cms
+base_url: 'http://localhost:8080'
+environment: dev
+timezone: Europe/Berlin
+core:
+  path: core
+updater:
+  channel: stable
+  manifest_url: ''
+  public_key: config/updater-public.pem
+  require_signature: true
+  timeout_seconds: 15
+cache:
+  enabled: true
+  ttl: 3600
+security:
+  force_https: false
+  hsts: false
+  content_security_policy: "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+  rate_limit:
+    requests: 120
+    window_seconds: 60
+smtp:
+  driver: mail
+  host: localhost
+  port: 587
+  username: ''
+  password: ''
+  encryption: tls
+  from_email: noreply@example.com
+  from_name: atoll-cms
+seo:
+  default_title: atoll-cms
+  default_description: 'Modern flat-file CMS for PHP.'
+  default_image: /assets/images/og-default.jpg
+  robots: "User-agent: *\nAllow: /"
+users:
+  -
+    username: admin
+    password_hash: $2y$12$OgfET5ONHMhR4g1p31w2i.ce65RWxh4PTuiBH8V2/NitWxzRwTlsK
+features:
+  seo_core: true
+  forms_core: true
+  media_core: true
+  backup_core: true
+  redirects_core: true
+appearance:
+  theme: default
+plugins:
+  defaults_enabled: true

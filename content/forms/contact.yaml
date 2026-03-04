@@ -1,0 +1,23 @@
+honeypot: website
+success_message: Vielen Dank, wir melden uns.
+
+fields:
+  name:
+    type: text
+    required: true
+  email:
+    type: email
+    required: true
+  message:
+    type: text
+    required: true
+
+mail:
+  to: admin@example.com
+  subject: Neue Kontaktanfrage
+  template: |
+    Name: {{name}}
+    E-Mail: {{email}}
+
+    Nachricht:
+    {{message}}

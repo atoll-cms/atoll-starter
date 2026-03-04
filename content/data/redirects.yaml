@@ -1,0 +1,6 @@
+- from: /home
+  to: /
+  status: 301
+- from: /artikel/*
+  to: /blog/$1
+  status: 302

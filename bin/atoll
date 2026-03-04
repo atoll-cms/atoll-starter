@@ -1,0 +1,1020 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require dirname(__DIR__) . '/core/src/bootstrap.php';
+
+use Atoll\Cache\CacheManager;
+use Atoll\Hooks\HookManager;
+use Atoll\Support\Config;
+use Atoll\Support\Yaml;
+
+$args = $argv;
+array_shift($args);
+$command = $args[0] ?? 'help';
+$root = dirname(__DIR__);
+$configPath = $root . '/config.yaml';
+$config = Config::load($configPath);
+$corePath = resolveCorePath($root, $config);
+
+$printHelp = static function (): void {
+    echo "atoll-cms CLI\n\n";
+    echo "Commands:\n";
+    echo "  atoll serve [port]                               Start local PHP server\n";
+    echo "  atoll cache:clear                                Clear HTML cache\n";
+    echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
+    echo "  atoll core:status                                Show active core path/version\n";
+    echo "  atoll core:check [channel]                       Check update channel for newer core\n";
+    echo "  atoll core:update <source> [--no-backup] [--keep-old]\n";
+    echo "                                                   Update core from local directory/release\n";
+    echo "  atoll core:update:remote [channel] [--no-backup] [--keep-old]\n";
+    echo "                                                   Update core from signed remote manifest\n";
+    echo "  atoll core:rollback [--from-dir=<path>] [--from-backup=<zip>]\n";
+    echo "                      [--no-backup] [--keep-current]            Roll back core to previous version\n";
+    echo "  atoll core:migrate [--from=<v>] [--to=<v>]       Run semantic core migrations\n";
+    echo "  atoll plugin:list                                List installed plugins\n";
+    echo "  atoll plugin:install <source> [--enable] [--force]\n";
+    echo "                                                   Install plugin from folder/zip\n";
+    echo "  atoll theme:list                                 List installed themes\n";
+    echo "  atoll theme:install <source> [--force]           Install theme from folder/zip\n";
+    echo "  atoll islands:build                              Build hint for island bundles\n";
+};
+
+switch ($command) {
+    case 'serve':
+        $port = (int) ($args[1] ?? 8080);
+        $cmd = sprintf('php -S localhost:%d -t %s %s/index.php', $port, escapeshellarg($root), escapeshellarg($root));
+        echo "Starting atoll-cms on http://localhost:{$port}\n";
+        passthru($cmd);
+        exit(0);
+
+    case 'cache:clear':
+        $cache = new CacheManager(
+            $root . '/cache',
+            (bool) Config::get($config, 'cache.enabled', true),
+            new HookManager(),
+            (int) Config::get($config, 'cache.ttl', 3600)
+        );
+        $cache->clear();
+        echo "Cache cleared.\n";
+        exit(0);
+
+    case 'new':
+        $target = $args[1] ?? null;
+        if ($target === null) {
+            fail("Usage: atoll new <path>");
+        }
+
+        $parent = realpath(dirname($target));
+        if ($parent === false) {
+            fail('Target parent directory does not exist.');
+        }
+
+        $targetPath = $parent . '/' . basename($target);
+        if (file_exists($targetPath)) {
+            fail("Target already exists: {$targetPath}");
+        }
+
+        mkdir($targetPath, 0775, true);
+        $cmd = sprintf(
+            'rsync -a --exclude .git --exclude vendor --exclude cache --exclude backups %s/ %s/',
+            escapeshellarg($root),
+            escapeshellarg($targetPath)
+        );
+        passthru($cmd, $code);
+        if ($code !== 0) {
+            fail('Scaffold failed.');
+        }
+
+        echo "New atoll-cms project created at {$targetPath}\n";
+        exit(0);
+
+    case 'core:status':
+        $version = readCoreVersion($corePath);
+        $channel = (string) Config::get($config, 'updater.channel', 'stable');
+        $manifest = (string) Config::get($config, 'updater.manifest_url', '');
+
+        echo "Core path: {$corePath}\n";
+        echo "Core version: {$version}\n";
+        echo "Update channel: {$channel}\n";
+        echo "Manifest URL: " . ($manifest !== '' ? $manifest : '(not configured)') . "\n";
+        exit(0);
+
+    case 'core:check':
+        $channel = firstPositionalArg($args, 1) ?? (string) Config::get($config, 'updater.channel', 'stable');
+        $currentVersion = readCoreVersion($corePath);
+        $manifest = loadUpdateManifest($config, $channel);
+        $release = selectLatestRelease($manifest, $currentVersion);
+
+        echo "Current core version: {$currentVersion}\n";
+        if ($release === null) {
+            echo "No newer release found for channel '{$channel}'.\n";
+            exit(0);
+        }
+
+        echo "Update available: {$release['version']}\n";
+        echo "Artifact: {$release['artifact_url']}\n";
+        if (is_string($release['notes'] ?? null) && $release['notes'] !== '') {
+            echo "Notes: {$release['notes']}\n";
+        }
+        exit(0);
+
+    case 'core:update':
+        $source = $args[1] ?? null;
+        if ($source === null) {
+            fail('Usage: atoll core:update <source> [--no-backup] [--keep-old]');
+        }
+
+        $sourceCore = detectCoreSource($source);
+        $noBackup = in_array('--no-backup', $args, true);
+        $keepOld = in_array('--keep-old', $args, true);
+
+        $oldVersion = readCoreVersion($corePath);
+        $newVersion = readCoreVersion($sourceCore);
+
+        $result = performCoreSwapUpdate(
+            root: $root,
+            configPath: $configPath,
+            config: $config,
+            currentCorePath: $corePath,
+            sourceCorePath: $sourceCore,
+            oldVersion: $oldVersion,
+            newVersion: $newVersion,
+            createBackup: !$noBackup,
+            keepOld: $keepOld,
+            sourceLabel: 'local source'
+        );
+
+        recordCoreUpdateEvent($root, [
+            'type' => 'update',
+            'source' => 'local',
+            'old_version' => $oldVersion,
+            'new_version' => $newVersion,
+            'backup' => $result['backup'] ?? null,
+            'old_core_path' => $result['old_core_path'] ?? null,
+        ]);
+        printUpdateResult($result);
+        exit(0);
+
+    case 'core:update:remote':
+        $channel = firstPositionalArg($args, 1) ?? (string) Config::get($config, 'updater.channel', 'stable');
+        $noBackup = in_array('--no-backup', $args, true);
+        $keepOld = in_array('--keep-old', $args, true);
+
+        $oldVersion = readCoreVersion($corePath);
+        $manifest = loadUpdateManifest($config, $channel);
+        $release = selectLatestRelease($manifest, $oldVersion);
+        if ($release === null) {
+            fail("No newer release found for channel '{$channel}'.");
+        }
+
+        $cacheDownloadDir = $root . '/cache/downloads';
+        if (!is_dir($cacheDownloadDir)) {
+            mkdir($cacheDownloadDir, 0775, true);
+        }
+
+        $artifactZip = downloadArtifact((string) $release['artifact_url'], $cacheDownloadDir, $config);
+        verifyReleaseIntegrity($release, $artifactZip, $config, $root);
+
+        $extracted = extractZipPackage($artifactZip, $root . '/cache');
+        $sourceCore = detectCoreSource($extracted);
+
+        $result = performCoreSwapUpdate(
+            root: $root,
+            configPath: $configPath,
+            config: $config,
+            currentCorePath: $corePath,
+            sourceCorePath: $sourceCore,
+            oldVersion: $oldVersion,
+            newVersion: (string) $release['version'],
+            createBackup: !$noBackup,
+            keepOld: $keepOld,
+            sourceLabel: 'remote channel ' . $channel
+        );
+
+        recordCoreUpdateEvent($root, [
+            'type' => 'update',
+            'source' => 'remote:' . $channel,
+            'old_version' => $oldVersion,
+            'new_version' => (string) $release['version'],
+            'backup' => $result['backup'] ?? null,
+            'old_core_path' => $result['old_core_path'] ?? null,
+            'artifact_url' => (string) ($release['artifact_url'] ?? ''),
+            'artifact_sha256' => (string) ($release['artifact_sha256'] ?? ''),
+        ]);
+        printUpdateResult($result);
+        exit(0);
+
+    case 'core:rollback':
+        $fromDir = getFlagValue($args, '--from-dir');
+        $fromBackup = getFlagValue($args, '--from-backup');
+        $noBackup = in_array('--no-backup', $args, true);
+        $keepCurrent = in_array('--keep-current', $args, true);
+
+        [$rollbackSourcePath, $rollbackLabel] = resolveRollbackSource($root, $fromDir, $fromBackup);
+        $sourceCore = detectCoreSource($rollbackSourcePath);
+
+        $oldVersion = readCoreVersion($corePath);
+        $newVersion = readCoreVersion($sourceCore);
+
+        $result = performCoreSwapUpdate(
+            root: $root,
+            configPath: $configPath,
+            config: $config,
+            currentCorePath: $corePath,
+            sourceCorePath: $sourceCore,
+            oldVersion: $oldVersion,
+            newVersion: $newVersion,
+            createBackup: !$noBackup,
+            keepOld: $keepCurrent,
+            sourceLabel: 'rollback from ' . $rollbackLabel
+        );
+
+        recordCoreUpdateEvent($root, [
+            'type' => 'rollback',
+            'source' => $rollbackLabel,
+            'old_version' => $oldVersion,
+            'new_version' => $newVersion,
+            'backup' => $result['backup'] ?? null,
+            'old_core_path' => $result['old_core_path'] ?? null,
+        ]);
+        printUpdateResult($result);
+        exit(0);
+
+    case 'core:migrate':
+        $from = getFlagValue($args, '--from') ?? readCoreVersion($corePath);
+        $to = getFlagValue($args, '--to') ?? readCoreVersion($corePath);
+
+        $state = runCoreMigrations($root, $configPath, $corePath, (string) $from, (string) $to);
+        echo "Core migrations complete.\n";
+        echo "Applied: " . count($state['applied']) . "\n";
+        exit(0);
+
+    case 'plugin:list':
+        $stateFile = $root . '/content/data/plugins.yaml';
+        $state = is_file($stateFile) ? Yaml::parse((string) file_get_contents($stateFile)) : [];
+        $state = is_array($state) ? $state : [];
+
+        $dirs = glob($root . '/plugins/*', GLOB_ONLYDIR) ?: [];
+        if ($dirs === []) {
+            echo "No plugins installed.\n";
+            exit(0);
+        }
+
+        foreach ($dirs as $dir) {
+            $id = basename($dir);
+            $manifestFile = $dir . '/plugin.php';
+            $name = $id;
+            if (is_file($manifestFile)) {
+                $manifest = require $manifestFile;
+                if (is_array($manifest) && is_string($manifest['name'] ?? null)) {
+                    $name = $manifest['name'];
+                }
+            }
+            $active = (bool) ($state[$id] ?? false);
+            echo sprintf("- %s (%s) [%s]\n", $id, $name, $active ? 'active' : 'inactive');
+        }
+        exit(0);
+
+    case 'plugin:install':
+        $source = $args[1] ?? null;
+        if ($source === null) {
+            fail('Usage: atoll plugin:install <source> [--enable] [--force]');
+        }
+
+        $force = in_array('--force', $args, true);
+        $enable = in_array('--enable', $args, true);
+
+        $sourceDir = resolveInstallSource($source, $root . '/cache', 'plugin');
+        if (!is_file($sourceDir . '/plugin.php')) {
+            fail('Invalid plugin package: plugin.php missing at root.');
+        }
+
+        $id = normalizePackageId(basename($sourceDir));
+        $dest = $root . '/plugins/' . $id;
+
+        if (is_dir($dest)) {
+            if (!$force) {
+                fail("Plugin already exists: {$id} (use --force to overwrite)");
+            }
+            rrmdir($dest);
+        }
+
+        copyDirectory($sourceDir, $dest);
+        echo "Plugin installed: {$id}\n";
+
+        if ($enable) {
+            $stateFile = $root . '/content/data/plugins.yaml';
+            $state = is_file($stateFile) ? Yaml::parse((string) file_get_contents($stateFile)) : [];
+            $state = is_array($state) ? $state : [];
+            $state[$id] = true;
+            if (!is_dir(dirname($stateFile))) {
+                mkdir(dirname($stateFile), 0775, true);
+            }
+            file_put_contents($stateFile, Yaml::dump($state));
+            echo "Plugin enabled: {$id}\n";
+        }
+        exit(0);
+
+    case 'theme:list':
+        $activeTheme = (string) Config::get($config, 'appearance.theme', 'default');
+        $dirs = glob($root . '/themes/*', GLOB_ONLYDIR) ?: [];
+        if ($dirs === []) {
+            echo "No site themes installed.\n";
+        }
+        foreach ($dirs as $dir) {
+            $id = basename($dir);
+            $marker = $id === $activeTheme ? '*' : ' ';
+            echo sprintf("%s %s\n", $marker, $id);
+        }
+        echo "Core fallback theme: default ({$corePath}/themes/default)\n";
+        exit(0);
+
+    case 'theme:install':
+        $source = $args[1] ?? null;
+        if ($source === null) {
+            fail('Usage: atoll theme:install <source> [--force]');
+        }
+
+        $force = in_array('--force', $args, true);
+        $sourceDir = resolveInstallSource($source, $root . '/cache', 'theme');
+
+        if (!is_dir($sourceDir . '/templates')) {
+            fail('Invalid theme package: templates/ missing at root.');
+        }
+
+        $id = normalizePackageId(basename($sourceDir));
+        $dest = $root . '/themes/' . $id;
+
+        if (is_dir($dest)) {
+            if (!$force) {
+                fail("Theme already exists: {$id} (use --force to overwrite)");
+            }
+            rrmdir($dest);
+        }
+
+        copyDirectory($sourceDir, $dest);
+        echo "Theme installed: {$id}\n";
+        exit(0);
+
+    case 'islands:build':
+        echo "Build islands locally with Vite and commit bundles to /core/islands/dist or /islands/dist.\n";
+        echo "Server runtime does not require Node.js.\n";
+        exit(0);
+
+    case 'help':
+    default:
+        $printHelp();
+        exit($command === 'help' ? 0 : 1);
+}
+
+function fail(string $message): never
+{
+    fwrite(STDERR, $message . "\n");
+    exit(1);
+}
+
+/** @param array<string, mixed> $config */
+function resolveCorePath(string $root, array $config): string
+{
+    $configured = Config::get($config, 'core.path', 'core');
+    if (!is_string($configured) || $configured === '') {
+        $configured = 'core';
+    }
+
+    if (str_starts_with($configured, '/')) {
+        return rtrim($configured, '/');
+    }
+
+    return rtrim($root . '/' . ltrim($configured, '/'), '/');
+}
+
+function readCoreVersion(string $corePath): string
+{
+    $versionFile = $corePath . '/VERSION';
+    if (is_file($versionFile)) {
+        return trim((string) file_get_contents($versionFile));
+    }
+
+    return 'unknown';
+}
+
+/** @return array<string, mixed> */
+function loadUpdateManifest(array $config, string $channel): array
+{
+    $manifestUrl = Config::get($config, 'updater.manifest_url', '');
+    if (!is_string($manifestUrl) || $manifestUrl === '') {
+        fail('No updater.manifest_url configured in config.yaml');
+    }
+
+    $timeout = (int) Config::get($config, 'updater.timeout_seconds', 15);
+    $raw = fetchRemoteText($manifestUrl, $timeout);
+    $manifest = json_decode($raw, true);
+    if (!is_array($manifest)) {
+        fail('Update manifest is not valid JSON.');
+    }
+
+    if (($manifest['channel'] ?? null) !== $channel) {
+        fail("Manifest channel mismatch. Expected '{$channel}', got '" . ($manifest['channel'] ?? 'unknown') . "'.");
+    }
+
+    if (!is_array($manifest['releases'] ?? null)) {
+        fail('Manifest missing releases array.');
+    }
+
+    return $manifest;
+}
+
+/** @param array<string, mixed> $manifest
+ *  @return array<string, mixed>|null
+ */
+function selectLatestRelease(array $manifest, string $currentVersion): ?array
+{
+    $releases = array_filter($manifest['releases'] ?? [], static fn ($r) => is_array($r));
+    usort($releases, static function (array $a, array $b): int {
+        return version_compare((string) ($b['version'] ?? '0.0.0'), (string) ($a['version'] ?? '0.0.0'));
+    });
+
+    foreach ($releases as $release) {
+        $version = (string) ($release['version'] ?? '0.0.0');
+        if (version_compare($version, $currentVersion, '>')) {
+            return $release;
+        }
+    }
+
+    return null;
+}
+
+/** @param array<string, mixed> $config */
+function downloadArtifact(string $url, string $downloadDir, array $config): string
+{
+    $timeout = (int) Config::get($config, 'updater.timeout_seconds', 30);
+    if (!is_dir($downloadDir)) {
+        mkdir($downloadDir, 0775, true);
+    }
+
+    $filename = basename(parse_url($url, PHP_URL_PATH) ?: 'core-release.zip');
+    $filename = $filename !== '' ? $filename : 'core-release.zip';
+    $target = rtrim($downloadDir, '/') . '/' . $filename;
+
+    $binary = fetchRemoteBinary($url, $timeout);
+    file_put_contents($target, $binary);
+
+    return $target;
+}
+
+/**
+ * @param array<string, mixed> $release
+ * @param array<string, mixed> $config
+ */
+function verifyReleaseIntegrity(array $release, string $artifactZip, array $config, string $root): void
+{
+    $expectedSha = (string) ($release['artifact_sha256'] ?? '');
+    if ($expectedSha === '') {
+        fail('Release missing artifact_sha256.');
+    }
+
+    $actualSha = hash_file('sha256', $artifactZip);
+    if (!hash_equals(strtolower($expectedSha), strtolower($actualSha))) {
+        fail('Artifact checksum mismatch.');
+    }
+
+    $requireSignature = (bool) Config::get($config, 'updater.require_signature', true);
+    $signature = (string) ($release['signature'] ?? '');
+
+    if (!$requireSignature && $signature === '') {
+        return;
+    }
+
+    if ($signature === '') {
+        fail('Signature required but release signature missing.');
+    }
+
+    $publicKeySetting = Config::get($config, 'updater.public_key', '');
+    if (!is_string($publicKeySetting) || $publicKeySetting === '') {
+        fail('Signature required but updater.public_key not configured.');
+    }
+
+    $publicKeyPath = str_starts_with($publicKeySetting, '/')
+        ? $publicKeySetting
+        : rtrim($root, '/') . '/' . ltrim($publicKeySetting, '/');
+
+    if (!is_file($publicKeyPath)) {
+        fail('Public key file not found: ' . $publicKeyPath);
+    }
+
+    $publicKey = (string) file_get_contents($publicKeyPath);
+    $payload = (string) ($release['signature_payload'] ?? ('atoll-core|' . ($release['version'] ?? '') . '|' . $expectedSha));
+    $rawSignature = base64_decode($signature, true);
+    if (!is_string($rawSignature)) {
+        fail('Release signature is not valid base64.');
+    }
+
+    if (!function_exists('openssl_verify')) {
+        fail('OpenSSL extension required for signature verification.');
+    }
+
+    $verified = openssl_verify($payload, $rawSignature, $publicKey, OPENSSL_ALGO_SHA256);
+    if ($verified !== 1) {
+        fail('Release signature verification failed.');
+    }
+}
+
+function detectCoreSource(string $source): string
+{
+    $resolved = realpath($source);
+    if ($resolved === false) {
+        fail("Source not found: {$source}");
+    }
+
+    if (is_dir($resolved . '/core/src')) {
+        return $resolved . '/core';
+    }
+
+    if (is_dir($resolved . '/src')) {
+        return $resolved;
+    }
+
+    fail('Source is not a valid core package. Expected <source>/core/src or <source>/src.');
+}
+
+function extractZipPackage(string $zipPath, string $cacheRoot): string
+{
+    if (!class_exists(ZipArchive::class)) {
+        fail('ZipArchive extension is required for extraction.');
+    }
+
+    $extractRoot = createUniqueWorkDir($cacheRoot, '.core-release-');
+
+    $zip = new ZipArchive();
+    if ($zip->open($zipPath) !== true) {
+        fail('Could not open downloaded release zip.');
+    }
+    $zip->extractTo($extractRoot);
+    $zip->close();
+
+    $dirs = glob($extractRoot . '/*', GLOB_ONLYDIR) ?: [];
+    if (count($dirs) === 1) {
+        return $dirs[0];
+    }
+
+    return $extractRoot;
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return array<string, mixed>
+ */
+function performCoreSwapUpdate(
+    string $root,
+    string $configPath,
+    array $config,
+    string $currentCorePath,
+    string $sourceCorePath,
+    string $oldVersion,
+    string $newVersion,
+    bool $createBackup,
+    bool $keepOld,
+    string $sourceLabel
+): array {
+    if (!is_dir($currentCorePath)) {
+        fail("Current core path does not exist: {$currentCorePath}");
+    }
+
+    $backupFile = null;
+    if ($createBackup) {
+        $backupDir = $root . '/backups';
+        if (!is_dir($backupDir)) {
+            mkdir($backupDir, 0775, true);
+        }
+        $backupFile = createUniqueBackupPath($backupDir, 'core-backup-', '.zip');
+        zipDirectory($currentCorePath, $backupFile);
+    }
+
+    $tmp = createUniqueWorkDir($root . '/cache', '.core-update-');
+    $old = createUniqueWorkDir($root . '/cache', '.core-old-');
+
+    copyDirectory($sourceCorePath, $tmp);
+
+    if (!rename($currentCorePath, $old)) {
+        rrmdir($tmp);
+        fail('Could not move old core out of the way.');
+    }
+
+    if (!rename($tmp, $currentCorePath)) {
+        rename($old, $currentCorePath);
+        rrmdir($tmp);
+        fail('Could not activate new core. Rolled back.');
+    }
+
+    try {
+        runCoreMigrations($root, $configPath, $currentCorePath, $oldVersion, $newVersion);
+    } catch (Throwable $e) {
+        rrmdir($currentCorePath);
+        rename($old, $currentCorePath);
+        fail('Core migrations failed: ' . $e->getMessage() . ' (core rollback applied).');
+    }
+
+    if (!$keepOld) {
+        rrmdir($old);
+    }
+
+    return [
+        'ok' => true,
+        'old_version' => $oldVersion,
+        'new_version' => $newVersion,
+        'source' => $sourceLabel,
+        'backup' => $backupFile,
+        'old_core_path' => $keepOld ? $old : null,
+    ];
+}
+
+/**
+ * @return array{applied:array<int,array<string,mixed>>}
+ */
+function runCoreMigrations(string $root, string $configPath, string $corePath, string $fromVersion, string $toVersion): array
+{
+    $statePath = $root . '/content/data/core-migrations.yaml';
+    $state = is_file($statePath) ? Yaml::parse((string) file_get_contents($statePath)) : [];
+    $state = is_array($state) ? $state : [];
+    $state['applied'] ??= [];
+
+    $appliedIds = [];
+    foreach ((array) $state['applied'] as $row) {
+        if (is_array($row) && is_string($row['id'] ?? null)) {
+            $appliedIds[$row['id']] = true;
+        }
+    }
+
+    $migrationFiles = glob(rtrim($corePath, '/') . '/migrations/*.php') ?: [];
+    sort($migrationFiles);
+
+    $config = Config::load($configPath);
+
+    foreach ($migrationFiles as $file) {
+        $def = require $file;
+        if (!is_array($def)) {
+            continue;
+        }
+
+        $id = (string) ($def['id'] ?? basename($file));
+        $target = (string) ($def['target_version'] ?? '0.0.0');
+        $up = $def['up'] ?? null;
+        if (!is_callable($up)) {
+            continue;
+        }
+
+        if (isset($appliedIds[$id])) {
+            continue;
+        }
+
+        if (!(version_compare($fromVersion, $target, '<') && version_compare($toVersion, $target, '>='))) {
+            continue;
+        }
+
+        $up([
+            'root' => $root,
+            'core_path' => $corePath,
+            'config_path' => $configPath,
+            'config' => $config,
+            'from_version' => $fromVersion,
+            'to_version' => $toVersion,
+        ]);
+
+        $state['applied'][] = [
+            'id' => $id,
+            'target_version' => $target,
+            'description' => (string) ($def['description'] ?? ''),
+            'applied_at' => date('c'),
+        ];
+        $appliedIds[$id] = true;
+    }
+
+    if (!is_dir(dirname($statePath))) {
+        mkdir(dirname($statePath), 0775, true);
+    }
+    file_put_contents($statePath, Yaml::dump($state));
+
+    return ['applied' => (array) $state['applied']];
+}
+
+/** @param array<string, mixed> $result */
+function printUpdateResult(array $result): void
+{
+    echo "Core updated successfully.\n";
+    echo "Source: " . (string) ($result['source'] ?? 'unknown') . "\n";
+    echo "Old version: " . (string) ($result['old_version'] ?? 'unknown') . "\n";
+    echo "New version: " . (string) ($result['new_version'] ?? 'unknown') . "\n";
+
+    if (is_string($result['backup'] ?? null) && $result['backup'] !== '') {
+        echo "Backup: {$result['backup']}\n";
+    }
+    if (is_string($result['old_core_path'] ?? null) && $result['old_core_path'] !== '') {
+        echo "Old core kept at: {$result['old_core_path']}\n";
+    }
+}
+
+/**
+ * @param array<int, string> $args
+ * @return array{0:string,1:string}
+ */
+function resolveRollbackSource(string $root, ?string $fromDir, ?string $fromBackup): array
+{
+    if ($fromDir !== null && $fromDir !== '') {
+        return [$fromDir, 'directory:' . $fromDir];
+    }
+
+    if ($fromBackup !== null && $fromBackup !== '') {
+        $resolved = realpath($fromBackup);
+        if ($resolved === false) {
+            fail("Rollback backup not found: {$fromBackup}");
+        }
+        if (!str_ends_with(strtolower($resolved), '.zip')) {
+            fail('Rollback backup must point to a .zip file.');
+        }
+        $extracted = extractZipPackage($resolved, $root . '/cache');
+        return [$extracted, 'backup:' . $resolved];
+    }
+
+    $events = getCoreUpdateEvents($root);
+    if ($events === []) {
+        fail('No rollback source specified and no update history found.');
+    }
+
+    for ($i = count($events) - 1; $i >= 0; $i--) {
+        $event = $events[$i];
+        $oldCorePath = (string) ($event['old_core_path'] ?? '');
+        if ($oldCorePath !== '' && is_dir($oldCorePath)) {
+            return [$oldCorePath, 'history-old-core:' . $oldCorePath];
+        }
+
+        $backup = (string) ($event['backup'] ?? '');
+        if ($backup !== '' && is_file($backup)) {
+            $extracted = extractZipPackage($backup, $root . '/cache');
+            return [$extracted, 'history-backup:' . $backup];
+        }
+    }
+
+    fail('No usable rollback source found in history. Provide --from-dir or --from-backup.');
+}
+
+/** @param array<string, mixed> $entry */
+function recordCoreUpdateEvent(string $root, array $entry): void
+{
+    $historyPath = $root . '/content/data/core-updates.yaml';
+    $history = is_file($historyPath) ? Yaml::parse((string) file_get_contents($historyPath)) : [];
+    $history = is_array($history) ? $history : [];
+    $history['events'] ??= [];
+
+    $entry['at'] = date('c');
+    $history['events'][] = $entry;
+    if (count($history['events']) > 50) {
+        $history['events'] = array_slice($history['events'], -50);
+    }
+
+    if (!is_dir(dirname($historyPath))) {
+        mkdir(dirname($historyPath), 0775, true);
+    }
+    file_put_contents($historyPath, Yaml::dump($history));
+}
+
+/** @return array<int, array<string, mixed>> */
+function getCoreUpdateEvents(string $root): array
+{
+    $historyPath = $root . '/content/data/core-updates.yaml';
+    if (!is_file($historyPath)) {
+        return [];
+    }
+
+    $history = Yaml::parse((string) file_get_contents($historyPath));
+    if (!is_array($history) || !is_array($history['events'] ?? null)) {
+        return [];
+    }
+
+    $events = [];
+    foreach ($history['events'] as $row) {
+        if (is_array($row)) {
+            $events[] = $row;
+        }
+    }
+
+    return $events;
+}
+
+function getFlagValue(array $args, string $flag): ?string
+{
+    foreach ($args as $arg) {
+        if (str_starts_with($arg, $flag . '=')) {
+            return substr($arg, strlen($flag) + 1);
+        }
+    }
+
+    return null;
+}
+
+function firstPositionalArg(array $args, int $startIndex = 1): ?string
+{
+    foreach ($args as $index => $arg) {
+        if ($index < $startIndex) {
+            continue;
+        }
+        if (!str_starts_with($arg, '--')) {
+            return $arg;
+        }
+    }
+
+    return null;
+}
+
+function resolveInstallSource(string $source, string $cacheRoot, string $kind): string
+{
+    $resolved = realpath($source);
+    if ($resolved === false) {
+        fail("{$kind} source not found: {$source}");
+    }
+
+    if (is_dir($resolved)) {
+        return rtrim($resolved, '/');
+    }
+
+    if (!str_ends_with(strtolower($resolved), '.zip')) {
+        fail("{$kind} source must be a directory or .zip archive");
+    }
+
+    if (!class_exists(ZipArchive::class)) {
+        fail('ZipArchive extension is required for zip installs.');
+    }
+
+    $extractRoot = createUniqueWorkDir($cacheRoot, '.' . $kind . '-install-');
+
+    $zip = new ZipArchive();
+    if ($zip->open($resolved) !== true) {
+        fail("Could not open zip archive: {$resolved}");
+    }
+    $zip->extractTo($extractRoot);
+    $zip->close();
+
+    $dirs = glob($extractRoot . '/*', GLOB_ONLYDIR) ?: [];
+    if (count($dirs) === 1) {
+        return $dirs[0];
+    }
+
+    return $extractRoot;
+}
+
+function normalizePackageId(string $value): string
+{
+    $slug = strtolower((string) preg_replace('/[^a-zA-Z0-9._-]/', '-', $value));
+    $slug = trim($slug, '-._');
+    return $slug !== '' ? $slug : 'package';
+}
+
+function copyDirectory(string $source, string $destination): void
+{
+    if (!is_dir($source)) {
+        fail("copyDirectory source missing: {$source}");
+    }
+
+    if (!is_dir($destination)) {
+        mkdir($destination, 0775, true);
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        $sourcePath = $item->getPathname();
+        $relative = substr($sourcePath, strlen($source) + 1);
+        $targetPath = $destination . '/' . $relative;
+
+        if ($item->isDir()) {
+            if (!is_dir($targetPath)) {
+                mkdir($targetPath, 0775, true);
+            }
+        } else {
+            $targetDir = dirname($targetPath);
+            if (!is_dir($targetDir)) {
+                mkdir($targetDir, 0775, true);
+            }
+            copy($sourcePath, $targetPath);
+        }
+    }
+}
+
+function rrmdir(string $dir): void
+{
+    if (!is_dir($dir)) {
+        return;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        if ($item->isDir()) {
+            rmdir($item->getPathname());
+        } else {
+            unlink($item->getPathname());
+        }
+    }
+
+    rmdir($dir);
+}
+
+function zipDirectory(string $sourceDir, string $zipPath): void
+{
+    if (!class_exists(ZipArchive::class)) {
+        fail('ZipArchive extension is required for backup creation.');
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        fail("Could not create backup zip: {$zipPath}");
+    }
+
+    $base = realpath($sourceDir);
+    if ($base === false) {
+        fail("Backup source not found: {$sourceDir}");
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        $real = $item->getRealPath();
+        if ($real === false) {
+            continue;
+        }
+        $relative = substr($real, strlen($base) + 1);
+        if ($item->isDir()) {
+            $zip->addEmptyDir($relative);
+        } else {
+            $zip->addFile($real, $relative);
+        }
+    }
+
+    $zip->close();
+}
+
+function fetchRemoteText(string $url, int $timeout): string
+{
+    $context = stream_context_create([
+        'http' => [
+            'timeout' => $timeout,
+            'follow_location' => 1,
+            'max_redirects' => 3,
+            'user_agent' => 'atoll-cms-updater/0.1',
+        ],
+    ]);
+
+    $raw = @file_get_contents($url, false, $context);
+    if (!is_string($raw)) {
+        fail("Could not fetch URL: {$url}");
+    }
+
+    return $raw;
+}
+
+function fetchRemoteBinary(string $url, int $timeout): string
+{
+    return fetchRemoteText($url, $timeout);
+}
+
+function createUniqueBackupPath(string $backupDir, string $prefix, string $suffix): string
+{
+    $tries = 0;
+    do {
+        $token = date('Ymd-His') . '-' . bin2hex(random_bytes(3));
+        $path = rtrim($backupDir, '/') . '/' . $prefix . $token . $suffix;
+        $tries++;
+    } while (is_file($path) && $tries < 10);
+
+    return $path;
+}
+
+function createUniqueWorkDir(string $baseDir, string $prefix): string
+{
+    if (!is_dir($baseDir)) {
+        mkdir($baseDir, 0775, true);
+    }
+
+    $tries = 0;
+    do {
+        $token = date('Ymd-His') . '-' . bin2hex(random_bytes(3));
+        $path = rtrim($baseDir, '/') . '/' . $prefix . $token;
+        $tries++;
+    } while (is_dir($path) && $tries < 20);
+
+    if (!mkdir($path, 0775, true) && !is_dir($path)) {
+        fail('Could not create temporary work directory: ' . $path);
+    }
+
+    return $path;
+}

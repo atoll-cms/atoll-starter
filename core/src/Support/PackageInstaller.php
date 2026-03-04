@@ -117,6 +117,12 @@ final class PackageInstaller
         bool $force = false,
         array $config = []
     ): array {
+        $normalizedId = self::normalizePackageId($id);
+        $localTheme = self::resolveLocalThemeRepository($root, $normalizedId, $config);
+        if ($localTheme !== null) {
+            return self::linkThemeFromLocalRepository($root, $normalizedId, $localTheme, $force);
+        }
+
         $entry = self::findRegistryEntry(rtrim($root, '/') . '/content/data/theme-registry.json', $id);
         $source = (string) ($entry['source'] ?? '');
         if ($source === '') {
@@ -259,7 +265,7 @@ final class PackageInstaller
 
     private static function prepareDestination(string $destination, bool $force, string $existsError): void
     {
-        if (!is_dir($destination)) {
+        if (!file_exists($destination) && !is_link($destination)) {
             return;
         }
 
@@ -267,7 +273,91 @@ final class PackageInstaller
             throw new RuntimeException($existsError);
         }
 
+        if (is_link($destination) || is_file($destination)) {
+            @unlink($destination);
+            return;
+        }
+
         self::rrmdir($destination);
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    private static function resolveLocalThemeRepository(string $root, string $id, array $config): ?string
+    {
+        $envEnabled = getenv('ATOLL_DEV_LOCAL');
+        if (!is_string($envEnabled) || trim($envEnabled) === '') {
+            return null;
+        }
+        $envEnabledNormalized = strtolower(trim($envEnabled));
+        if (in_array($envEnabledNormalized, ['0', 'false', 'off', 'no'], true)) {
+            return null;
+        }
+
+        $workspaceEnv = getenv('ATOLL_DEV_LOCAL_WORKSPACE');
+        $workspace = is_string($workspaceEnv) && trim($workspaceEnv) !== '' ? $workspaceEnv : '..';
+        if ($workspace === '') {
+            $workspace = '..';
+        }
+
+        $workspacePath = str_starts_with($workspace, '/')
+            ? rtrim($workspace, '/')
+            : rtrim($root, '/') . '/' . ltrim($workspace, '/');
+
+        $candidate = rtrim($workspacePath, '/') . '/atoll-theme-' . $id;
+        $real = realpath($candidate);
+        if ($real === false || !is_dir($real) || !is_dir($real . '/templates')) {
+            return null;
+        }
+
+        return rtrim($real, '/');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function linkThemeFromLocalRepository(string $root, string $id, string $sourceDir, bool $force): array
+    {
+        $dest = rtrim($root, '/') . '/themes/' . $id;
+        if (!is_dir(dirname($dest))) {
+            mkdir(dirname($dest), 0775, true);
+        }
+
+        if (is_link($dest)) {
+            $current = realpath($dest);
+            if ($current !== false && $current === $sourceDir) {
+                return [
+                    'ok' => true,
+                    'id' => $id,
+                    'path' => $dest,
+                    'linked' => true,
+                    'link_target' => $sourceDir,
+                ];
+            }
+
+            if (!$force) {
+                throw new RuntimeException("Theme already exists: {$id} (use --force to overwrite)");
+            }
+            @unlink($dest);
+        } elseif (file_exists($dest)) {
+            if (!$force) {
+                throw new RuntimeException("Theme already exists: {$id} (use --force to overwrite)");
+            }
+            self::prepareDestination($dest, true, '');
+        }
+
+        if (!symlink($sourceDir, $dest)) {
+            throw new RuntimeException("Could not create symlink for theme '{$id}'");
+        }
+
+        return [
+            'ok' => true,
+            'id' => $id,
+            'path' => $dest,
+            'linked' => true,
+            'link_target' => $sourceDir,
+        ];
     }
 
     private static function normalizePackageId(string $value): string

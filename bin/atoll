@@ -77,7 +77,12 @@ switch ($command) {
         register_shutdown_function(static function () use (&$watchers): void {
             stopBackgroundProcesses($watchers);
         });
-        $exitCode = runPhpServer($root, $port);
+        $workspaceRoot = realpath(dirname($root));
+        $workspaceRoot = $workspaceRoot !== false ? $workspaceRoot : dirname($root);
+        $exitCode = runPhpServer($root, $port, [
+            'ATOLL_DEV_LOCAL' => '1',
+            'ATOLL_DEV_LOCAL_WORKSPACE' => $workspaceRoot,
+        ]);
         stopBackgroundProcesses($watchers);
         exit($exitCode);
 
@@ -445,7 +450,11 @@ switch ($command) {
             fail($e->getMessage());
         }
 
-        echo "Theme installed from registry: " . $result['id'] . "\n";
+        if (($result['linked'] ?? false) === true) {
+            echo "Theme linked from local repository: " . $result['id'] . "\n";
+        } else {
+            echo "Theme installed from registry: " . $result['id'] . "\n";
+        }
         exit(0);
 
     case 'preset:list':
@@ -572,6 +581,12 @@ function setupLocalDevWorkspace(
 
     $config = Config::load($configPath);
     $configChanged = false;
+
+    if (array_key_exists('dev_local', $config)) {
+        unset($config['dev_local']);
+        $configChanged = true;
+    }
+    $messages[] = 'Dev-local runtime mode enabled for this process (registry installs prefer local sibling themes).';
 
     $coreCandidate = rtrim($workspaceRoot, '/') . '/atoll-core';
     if (is_dir($coreCandidate)) {
@@ -743,9 +758,26 @@ function linkLocalRepository(
     return "Linked {$kind} '{$id}' -> {$sourceReal}";
 }
 
-function runPhpServer(string $root, int $port): int
+/**
+ * @param array<string, string> $env
+ */
+function runPhpServer(string $root, int $port, array $env = []): int
 {
-    $cmd = sprintf('php -S localhost:%d -t %s %s/index.php', $port, escapeshellarg($root), escapeshellarg($root));
+    $envPrefix = '';
+    foreach ($env as $key => $value) {
+        if (!preg_match('/^[A-Z0-9_]+$/', $key)) {
+            continue;
+        }
+        $envPrefix .= $key . '=' . escapeshellarg($value) . ' ';
+    }
+
+    $cmd = sprintf(
+        '%sphp -S localhost:%d -t %s %s/index.php',
+        $envPrefix,
+        $port,
+        escapeshellarg($root),
+        escapeshellarg($root)
+    );
     echo "Starting atoll-cms on http://localhost:{$port}\n";
     passthru($cmd, $exitCode);
     return (int) $exitCode;

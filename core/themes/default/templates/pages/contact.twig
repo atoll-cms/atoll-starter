@@ -6,6 +6,6 @@
 
   <section>
     <h2>Kontaktformular</h2>
-    {{ island('ContactForm', { client: 'visible', props: { endpoint: '/forms/contact', csrf: csrf_token } })|raw }}
+    {{ island('ContactForm', { client: 'visible', props: { endpoint: url('/forms/contact'), csrf: csrf_token } })|raw }}
   </section>
 {% endblock %}

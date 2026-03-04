@@ -14,6 +14,7 @@ use Twig\TwigFunction;
 final class TemplateEngine
 {
     private ?Environment $twig = null;
+    private string $basePath = '';
 
     /** @param array<string, mixed> $config */
     public function __construct(
@@ -27,6 +28,8 @@ final class TemplateEngine
         private readonly SeoManager $seo,
         private readonly array $config
     ) {
+        $this->basePath = $this->extractBasePath((string) ($this->config['base_url'] ?? ''));
+
         if (class_exists(Environment::class) && class_exists(FilesystemLoader::class)) {
             $loader = new FilesystemLoader($this->templatePaths);
             $this->twig = new Environment($loader, [
@@ -39,6 +42,9 @@ final class TemplateEngine
             $this->twig->addFunction(new TwigFunction('hook', fn (string $name, mixed ...$payload) => $this->hooks->concat($name, ...$payload), ['is_safe' => ['html']]));
             $this->twig->addFunction(new TwigFunction('seo_meta', fn (array $page) => $this->seoFromArray($page), ['is_safe' => ['html']]));
             $this->twig->addFunction(new TwigFunction('theme_asset', fn (string $path) => $this->resolveThemeAsset($path)));
+            $this->twig->addFunction(new TwigFunction('url', fn (string $path = '/') => $this->resolveUrl($path)));
+            $this->twig->addFunction(new TwigFunction('asset', fn (string $path) => $this->resolveUrl($path)));
+            $this->twig->addFunction(new TwigFunction('base_path', fn () => $this->basePath === '' ? '/' : $this->basePath));
             $this->twig->addFunction(new TwigFunction('now', fn () => date('c')));
 
             $this->twig->addGlobal('site', $this->config);
@@ -85,14 +91,56 @@ final class TemplateEngine
         $relative = ltrim($relative, '/');
         $siteThemePath = $this->siteRoot . '/themes/' . $this->activeTheme . '/assets/' . $relative;
         if (is_file($siteThemePath)) {
-            return '/themes/' . rawurlencode($this->activeTheme) . '/assets/' . $relative;
+            return $this->resolveUrl('/themes/' . rawurlencode($this->activeTheme) . '/assets/' . $relative);
         }
 
         $coreThemePath = $this->coreRoot . '/themes/default/assets/' . $relative;
         if (is_file($coreThemePath)) {
-            return '/core/themes/default/assets/' . $relative;
+            return $this->resolveUrl('/core/themes/default/assets/' . $relative);
         }
 
-        return '/core/themes/default/assets/' . $relative;
+        return $this->resolveUrl('/core/themes/default/assets/' . $relative);
+    }
+
+    private function resolveUrl(string $path): string
+    {
+        $path = trim($path);
+        if ($path === '') {
+            return $this->basePath === '' ? '/' : $this->basePath . '/';
+        }
+
+        if (
+            preg_match('/^[a-z][a-z0-9+.-]*:/i', $path) === 1
+            || str_starts_with($path, '//')
+            || str_starts_with($path, '#')
+            || str_starts_with($path, '?')
+        ) {
+            return $path;
+        }
+
+        if (!str_starts_with($path, '/')) {
+            $path = '/' . ltrim($path, '/');
+        }
+
+        if ($this->basePath === '') {
+            return $path;
+        }
+
+        if ($path === $this->basePath || str_starts_with($path, $this->basePath . '/')) {
+            return $path;
+        }
+
+        return $this->basePath . $path;
+    }
+
+    private function extractBasePath(string $baseUrl): string
+    {
+        $parsedPath = parse_url($baseUrl, PHP_URL_PATH);
+        if (!is_string($parsedPath)) {
+            return '';
+        }
+
+        $trimmed = trim($parsedPath, '/');
+        return $trimmed === '' ? '' : '/' . $trimmed;
     }
 }

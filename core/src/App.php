@@ -34,6 +34,11 @@ final class App
     {
         date_default_timezone_set('Europe/Berlin');
         $this->config = Config::load($this->root . '/config.yaml');
+        $envBaseUrl = getenv('ATOLL_BASE_URL');
+        if (is_string($envBaseUrl) && trim($envBaseUrl) !== '') {
+            $this->config['base_url'] = trim($envBaseUrl);
+        }
+
         $configuredCorePath = Config::get($this->config, 'core.path');
         $this->coreRoot = is_string($configuredCorePath) && $configuredCorePath !== ''
             ? $this->normalizeCorePath($configuredCorePath)
@@ -108,7 +113,8 @@ final class App
                 $this->root . '/islands/manifest.json',
             ],
             pluginIslands: $pluginManager->islandMap(),
-            loaderScript: '/core/assets/js/island-loader.js'
+            loaderScript: '/core/assets/js/island-loader.js',
+            basePath: $this->basePath()
         );
 
         $templates = new TemplateEngine(
@@ -275,6 +281,18 @@ final class App
         }
 
         return rtrim($this->root . '/' . ltrim($path, '/'), '/');
+    }
+
+    private function basePath(): string
+    {
+        $baseUrl = (string) Config::get($this->config, 'base_url', '');
+        $path = parse_url($baseUrl, PHP_URL_PATH);
+        if (!is_string($path)) {
+            return '';
+        }
+
+        $trimmed = trim($path, '/');
+        return $trimmed === '' ? '' : '/' . $trimmed;
     }
 
     private function isConfigured(): bool

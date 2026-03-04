@@ -8,6 +8,8 @@ final class IslandManager
 {
     /** @var array<string, string> */
     private array $manifest;
+    private string $resolvedLoaderScript;
+    private string $basePath;
 
     /**
      * @param array<int, string> $manifestPaths
@@ -16,8 +18,12 @@ final class IslandManager
     public function __construct(
         private readonly array $manifestPaths,
         private readonly array $pluginIslands = [],
-        private readonly string $loaderScript = '/core/assets/js/island-loader.js'
+        private readonly string $loaderScript = '/core/assets/js/island-loader.js',
+        string $basePath = ''
     ) {
+        $this->basePath = $this->normalizeBasePath($basePath);
+        $this->resolvedLoaderScript = $this->applyBasePath($this->loaderScript);
+
         $manifest = [];
         foreach ($this->manifestPaths as $manifestPath) {
             if (is_file($manifestPath)) {
@@ -25,14 +31,21 @@ final class IslandManager
                 if (is_array($decoded)) {
                     foreach ($decoded as $name => $url) {
                         if (is_string($name) && is_string($url)) {
-                            $manifest[$name] = $url;
+                            $manifest[$name] = $this->applyBasePath($url);
                         }
                     }
                 }
             }
         }
 
-        $this->manifest = array_merge($manifest, $this->pluginIslands);
+        $pluginIslands = [];
+        foreach ($this->pluginIslands as $name => $url) {
+            if (is_string($name) && is_string($url)) {
+                $pluginIslands[$name] = $this->applyBasePath($url);
+            }
+        }
+
+        $this->manifest = array_merge($manifest, $pluginIslands);
     }
 
     /** @param array<string, mixed> $options */
@@ -92,7 +105,7 @@ final class IslandManager
         }
 
         $scripts = [
-            '<script type="module" src="' . htmlspecialchars($this->loaderScript, ENT_QUOTES) . '" defer></script>',
+            '<script type="module" src="' . htmlspecialchars($this->resolvedLoaderScript, ENT_QUOTES) . '" defer></script>',
         ];
 
         foreach ($components as $component => $src) {
@@ -118,5 +131,29 @@ final class IslandManager
         }
 
         return $attrs;
+    }
+
+    private function applyBasePath(string $url): string
+    {
+        if (
+            preg_match('/^[a-z][a-z0-9+.-]*:/i', $url) === 1
+            || str_starts_with($url, '//')
+            || !str_starts_with($url, '/')
+            || $this->basePath === ''
+        ) {
+            return $url;
+        }
+
+        if ($url === $this->basePath || str_starts_with($url, $this->basePath . '/')) {
+            return $url;
+        }
+
+        return $this->basePath . $url;
+    }
+
+    private function normalizeBasePath(string $basePath): string
+    {
+        $trimmed = trim($basePath, '/');
+        return $trimmed === '' ? '' : '/' . $trimmed;
     }
 }

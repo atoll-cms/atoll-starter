@@ -5,7 +5,7 @@
   <div class="post-list">
     {% for item in items %}
       <article class="post-card">
-        <h2><a href="{{ item.url }}">{{ item.title }}</a></h2>
+        <h2><a href="{{ url(item.url) }}">{{ item.title }}</a></h2>
         <p class="meta">{{ item.date }} · {{ item.author|default('Admin') }}</p>
         <p>{{ item.excerpt }}</p>
       </article>

@@ -14,8 +14,14 @@ Projekt-/kundenspezifische Inhalte bleiben ausserhalb davon.
 `core/` (updatable):
 - Runtime (`core/src`)
 - Admin SPA (`core/admin`)
-- Built-in Theme Set (`core/themes/default`, `core/themes/business`, `core/themes/editorial`, `core/themes/portfolio`)
+- Built-in Fallback Theme (`core/themes/default`)
 - Island-Bundles (`core/islands`)
+
+Offizielle Themes (separate Repos):
+- `atoll-theme-skeleton`
+- `atoll-theme-business`
+- `atoll-theme-editorial`
+- `atoll-theme-portfolio`
 
 Site-Ebene (stabil bei Core-Updates):
 - `content/`
@@ -160,10 +166,9 @@ Theme installieren:
 
 ```bash
 php bin/atoll theme:install /pfad/zum/theme
-php bin/atoll theme:install:registry core-default
-php bin/atoll theme:install:registry core-business
-php bin/atoll theme:install:registry core-editorial
-php bin/atoll theme:install:registry core-portfolio
+php bin/atoll theme:install:registry business
+php bin/atoll theme:install:registry editorial
+php bin/atoll theme:install:registry portfolio
 php bin/atoll theme:list
 php bin/atoll theme:activate business
 ```
@@ -244,7 +249,7 @@ php bin/atoll plugin:install:registry i18n --enable
 php bin/atoll theme:list
 php bin/atoll theme:activate business
 php bin/atoll theme:install /path/to/theme
-php bin/atoll theme:install:registry core-default
+php bin/atoll theme:install:registry business
 php bin/atoll preset:list
 php bin/atoll preset:apply business
 ```

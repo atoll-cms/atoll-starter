@@ -199,32 +199,25 @@ final class InstallerController
         if (!is_file($themeRegistry)) {
             file_put_contents($themeRegistry, json_encode([
                 [
-                    'id' => 'core-default',
-                    'name' => 'Default Theme',
-                    'type' => 'core',
-                    'source' => 'core/themes/default',
-                    'description' => 'Built-in Atoll default theme',
-                ],
-                [
-                    'id' => 'core-business',
+                    'id' => 'business',
                     'name' => 'Business Theme',
-                    'type' => 'core',
-                    'source' => 'core/themes/business',
-                    'description' => 'Corporate/service websites with clear CTAs',
+                    'type' => 'official',
+                    'source' => 'https://github.com/atoll-cms/atoll-theme-business/archive/refs/heads/main.zip',
+                    'description' => 'Official external theme for corporate/service websites',
                 ],
                 [
-                    'id' => 'core-editorial',
+                    'id' => 'editorial',
                     'name' => 'Editorial Theme',
-                    'type' => 'core',
-                    'source' => 'core/themes/editorial',
-                    'description' => 'Content-heavy docs and blog style',
+                    'type' => 'official',
+                    'source' => 'https://github.com/atoll-cms/atoll-theme-editorial/archive/refs/heads/main.zip',
+                    'description' => 'Official external theme for docs/blog style sites',
                 ],
                 [
-                    'id' => 'core-portfolio',
+                    'id' => 'portfolio',
                     'name' => 'Portfolio Theme',
-                    'type' => 'core',
-                    'source' => 'core/themes/portfolio',
-                    'description' => 'Creative showcase with bold visual style',
+                    'type' => 'official',
+                    'source' => 'https://github.com/atoll-cms/atoll-theme-portfolio/archive/refs/heads/main.zip',
+                    'description' => 'Official external theme for visual showcase sites',
                 ],
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
         }

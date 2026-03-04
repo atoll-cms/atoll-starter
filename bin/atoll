@@ -439,8 +439,10 @@ switch ($command) {
         copyPresetTree($sourceContentDir, $targetContentDir, $force);
 
         $appliedTheme = '';
+        $installedTheme = '';
         if ($setTheme) {
             $theme = trim((string) ($preset['theme'] ?? ''));
+            $themeRegistryId = trim((string) ($preset['theme_registry_id'] ?? ''));
             if ($theme !== '') {
                 $themes = listAvailableThemes($root, $corePath);
                 $themeExists = false;
@@ -448,6 +450,23 @@ switch ($command) {
                     if (($entry['id'] ?? null) === $theme) {
                         $themeExists = true;
                         break;
+                    }
+                }
+
+                if (!$themeExists && $themeRegistryId !== '') {
+                    try {
+                        $installed = PackageInstaller::installThemeFromRegistry($root, $themeRegistryId, $force, $config);
+                    } catch (RuntimeException $e) {
+                        fail('Preset requires theme install failed: ' . $e->getMessage());
+                    }
+
+                    $installedTheme = (string) ($installed['id'] ?? '');
+                    $themes = listAvailableThemes($root, $corePath);
+                    foreach ($themes as $entry) {
+                        if (($entry['id'] ?? null) === $theme) {
+                            $themeExists = true;
+                            break;
+                        }
                     }
                 }
 
@@ -463,6 +482,9 @@ switch ($command) {
         }
 
         echo "Preset applied: {$id}\n";
+        if ($installedTheme !== '') {
+            echo "Theme installed: {$installedTheme}\n";
+        }
         if ($appliedTheme !== '') {
             echo "Theme activated: {$appliedTheme}\n";
         }
@@ -533,7 +555,7 @@ function listAvailableThemes(string $root, string $corePath): array
 }
 
 /**
- * @return array<int, array{id:string,theme:string,description:string,path:string}>
+ * @return array<int, array{id:string,theme:string,theme_registry_id:string,description:string,path:string}>
  */
 function listPresets(string $root): array
 {
@@ -558,7 +580,7 @@ function listPresets(string $root): array
 }
 
 /**
- * @return array{id:string,theme:string,description:string,path:string}|null
+ * @return array{id:string,theme:string,theme_registry_id:string,description:string,path:string}|null
  */
 function loadPreset(string $root, string $id): ?array
 {
@@ -585,6 +607,7 @@ function loadPreset(string $root, string $id): ?array
     return [
         'id' => $cleanId,
         'theme' => (string) ($meta['theme'] ?? ''),
+        'theme_registry_id' => (string) ($meta['theme_registry_id'] ?? ''),
         'description' => (string) ($meta['description'] ?? ''),
         'path' => $dir,
     ];

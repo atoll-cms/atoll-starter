@@ -103,11 +103,13 @@ final class InstallerController
                 'hsts' => false,
                 'content_security_policy' => "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
                 'rate_limit' => [
+                    'enabled' => true,
                     'requests' => 120,
                     'window_seconds' => 60,
                 ],
                 'admin_ip_allowlist' => [],
                 'session' => [
+                    'enabled' => true,
                     'ttl_minutes' => 480,
                     'secure_cookie' => false,
                     'same_site' => 'Lax',

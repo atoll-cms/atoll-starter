@@ -66,6 +66,22 @@ Alternativen:
 - `composer dev-local -- --setup-only` setzt nur den lokalen Core-Pfad (ohne Serverstart).
 - In `environment: dev` ist HTML-Cache standardmaessig deaktiviert, damit Theme-/Template-Aenderungen sofort sichtbar sind. Optional wieder aktivierbar mit `cache.dev_enabled: true`.
 
+### Static-Site Performance Profil
+
+Fuer reine Marketing-/Docs-Seiten ohne Login/Form-POSTs kannst du Security-Overhead reduzieren:
+
+```yaml
+security:
+  rate_limit:
+    enabled: false
+  session:
+    enabled: false
+```
+
+Hinweis:
+- `session.enabled: false` deaktiviert Login/CSRF-basierte Funktionen.
+- Fuer gemischte Sites empfiehlt sich `session.enabled: true`; Public GET-Seiten starten dank lazy session ohnehin keine Session mehr.
+
 3. Frontend/Admin:
 - [http://localhost:8080](http://localhost:8080)
 - [http://localhost:8080/admin](http://localhost:8080/admin)

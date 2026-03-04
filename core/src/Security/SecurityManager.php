@@ -12,6 +12,10 @@ use RuntimeException;
 final class SecurityManager
 {
     private string $auditFile;
+    private bool $sessionEnabled;
+    private bool $sessionSecure;
+    private string $sessionSameSite;
+    private string $sessionName;
 
     public function __construct(
         private readonly string $rateLimitDir,
@@ -20,28 +24,13 @@ final class SecurityManager
         ?string $auditFile = null
     ) {
         $this->auditFile = $auditFile ?? dirname($this->rateLimitDir, 2) . '/content/data/security-audit.jsonl';
+        $this->sessionEnabled = (bool) Config::get($this->config, 'security.session.enabled', true);
+        $this->sessionSecure = (bool) Config::get($this->config, 'security.session.secure_cookie', false);
+        $this->sessionSameSite = (string) Config::get($this->config, 'security.session.same_site', 'Lax');
+        $this->sessionName = (string) Config::get($this->config, 'security.session.name', 'ATOLLSESSID');
 
-        $sessionSecure = (bool) Config::get($this->config, 'security.session.secure_cookie', false);
-        $sessionSameSite = (string) Config::get($this->config, 'security.session.same_site', 'Lax');
-        $sessionName = (string) Config::get($this->config, 'security.session.name', 'ATOLLSESSID');
-
-        if (session_status() === PHP_SESSION_NONE) {
-            session_name($sessionName);
-            session_set_cookie_params([
-                'lifetime' => 0,
-                'path' => '/',
-                'domain' => '',
-                'secure' => $sessionSecure,
-                'httponly' => true,
-                'samesite' => $sessionSameSite,
-            ]);
-        }
-
-        if (session_status() !== PHP_SESSION_ACTIVE) {
-            session_start();
-        }
-
-        if (!is_dir($this->rateLimitDir)) {
+        $rateLimitEnabled = (bool) Config::get($this->config, 'security.rate_limit.enabled', true);
+        if ($rateLimitEnabled && !is_dir($this->rateLimitDir)) {
             mkdir($this->rateLimitDir, 0775, true);
         }
 
@@ -89,6 +78,10 @@ final class SecurityManager
 
     public function enforceRateLimit(Request $request, string $bucket = 'global', ?int $max = null, ?int $windowSeconds = null): ?Response
     {
+        if (!(bool) Config::get($this->config, 'security.rate_limit.enabled', true)) {
+            return null;
+        }
+
         $max ??= (int) Config::get($this->config, 'security.rate_limit.requests', 120);
         $windowSeconds ??= (int) Config::get($this->config, 'security.rate_limit.window_seconds', 60);
 
@@ -128,6 +121,10 @@ final class SecurityManager
 
     public function csrfToken(): string
     {
+        if (!$this->ensureSessionStarted()) {
+            return '';
+        }
+
         if (!isset($_SESSION['_atoll_csrf'])) {
             $_SESSION['_atoll_csrf'] = bin2hex(random_bytes(24));
         }
@@ -137,12 +134,20 @@ final class SecurityManager
 
     public function validateCsrf(?string $token): bool
     {
+        if (!$this->ensureSessionStarted()) {
+            return false;
+        }
+
         $current = $_SESSION['_atoll_csrf'] ?? '';
         return is_string($token) && $current !== '' && hash_equals($current, $token);
     }
 
     public function login(string $username, ?Request $request = null): void
     {
+        if (!$this->ensureSessionStarted()) {
+            throw new RuntimeException('Sessions are disabled.');
+        }
+
         session_regenerate_id(true);
         $_SESSION['_atoll_user'] = $username;
         $_SESSION['_atoll_login_at'] = time();
@@ -157,6 +162,10 @@ final class SecurityManager
     public function logout(?Request $request = null): void
     {
         $user = $this->currentUser();
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            return;
+        }
+
         unset($_SESSION['_atoll_user']);
         unset($_SESSION['_atoll_login_at'], $_SESSION['_atoll_last_activity']);
 
@@ -170,12 +179,20 @@ final class SecurityManager
 
     public function currentUser(): ?string
     {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            return null;
+        }
+
         $value = $_SESSION['_atoll_user'] ?? null;
         return is_string($value) ? $value : null;
     }
 
     public function isAuthenticated(): bool
     {
+        if (!$this->ensureSessionStarted()) {
+            return false;
+        }
+
         $user = $this->currentUser();
         if ($user === null) {
             return false;
@@ -337,6 +354,31 @@ final class SecurityManager
         }
 
         return array_reverse($entries);
+    }
+
+    private function ensureSessionStarted(): bool
+    {
+        if (!$this->sessionEnabled) {
+            return false;
+        }
+
+        if (session_status() === PHP_SESSION_NONE) {
+            session_name($this->sessionName);
+            session_set_cookie_params([
+                'lifetime' => 0,
+                'path' => '/',
+                'domain' => '',
+                'secure' => $this->sessionSecure,
+                'httponly' => true,
+                'samesite' => $this->sessionSameSite,
+            ]);
+        }
+
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_start();
+        }
+
+        return session_status() === PHP_SESSION_ACTIVE;
     }
 
     private function ipMatches(string $ip, string $allowed): bool

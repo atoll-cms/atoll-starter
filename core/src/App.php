@@ -133,7 +133,8 @@ final class App
             islands: $islands,
             hooks: $hooks,
             seo: $seo,
-            config: $this->config
+            config: $this->config,
+            csrfTokenProvider: fn (): string => $security->csrfToken()
         );
 
         $media = new MediaManager($this->root . '/assets/uploads', $hooks);
@@ -252,7 +253,6 @@ final class App
             'collection' => $resolved['collection'] ?? null,
             'items' => $resolved['items'] ?? [],
             'navigation' => $content->readDataFile('navigation.yaml'),
-            'csrf_token' => $security->csrfToken(),
         ];
 
         $hooks->run('page:before_render', $payload, $request);

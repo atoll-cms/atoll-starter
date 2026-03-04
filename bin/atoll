@@ -40,12 +40,13 @@ $printHelp = static function (): void {
     echo "  atoll plugin:list                                List installed plugins\n";
     echo "  atoll plugin:install <source> [--enable] [--force]\n";
     echo "                                                   Install plugin from folder/zip/url\n";
-    echo "  atoll plugin:install:registry <id> [--enable] [--force]\n";
+    echo "  atoll plugin:install:registry <id> [--enable] [--force] [--license=<key>]\n";
     echo "                                                   Install plugin via plugin-registry.json\n";
     echo "  atoll theme:list                                 List available themes (site + built-in core)\n";
     echo "  atoll theme:activate <id>                        Activate a theme\n";
     echo "  atoll theme:install <source> [--force]           Install theme from folder/zip/url\n";
-    echo "  atoll theme:install:registry <id> [--force]      Install theme via theme-registry.json\n";
+    echo "  atoll theme:install:registry <id> [--force] [--license=<key>]\n";
+    echo "                                                   Install theme via theme-registry.json\n";
     echo "  atoll preset:list                                List starter content presets\n";
     echo "  atoll preset:apply <id> [--force] [--no-theme]   Apply content preset to project\n";
     echo "  atoll islands:build                              Build frontend bundles once\n";
@@ -361,14 +362,22 @@ switch ($command) {
     case 'plugin:install:registry':
         $id = $args[1] ?? null;
         if ($id === null) {
-            fail('Usage: atoll plugin:install:registry <id> [--enable] [--force]');
+            fail('Usage: atoll plugin:install:registry <id> [--enable] [--force] [--license=<key>]');
         }
 
         $force = in_array('--force', $args, true);
         $enable = in_array('--enable', $args, true);
+        $licenseKey = getFlagValue($args, '--license');
 
         try {
-            $result = PackageInstaller::installPluginFromRegistry($root, $id, $force, $enable, $config);
+            $result = PackageInstaller::installPluginFromRegistry(
+                $root,
+                $id,
+                $force,
+                $enable,
+                $config,
+                $licenseKey !== null && trim($licenseKey) !== '' ? trim($licenseKey) : null
+            );
         } catch (RuntimeException $e) {
             fail($e->getMessage());
         }
@@ -444,12 +453,19 @@ switch ($command) {
     case 'theme:install:registry':
         $id = $args[1] ?? null;
         if ($id === null) {
-            fail('Usage: atoll theme:install:registry <id> [--force]');
+            fail('Usage: atoll theme:install:registry <id> [--force] [--license=<key>]');
         }
 
         $force = in_array('--force', $args, true);
+        $licenseKey = getFlagValue($args, '--license');
         try {
-            $result = PackageInstaller::installThemeFromRegistry($root, $id, $force, $config);
+            $result = PackageInstaller::installThemeFromRegistry(
+                $root,
+                $id,
+                $force,
+                $config,
+                $licenseKey !== null && trim($licenseKey) !== '' ? trim($licenseKey) : null
+            );
         } catch (RuntimeException $e) {
             fail($e->getMessage());
         }

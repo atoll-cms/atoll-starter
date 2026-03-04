@@ -167,6 +167,7 @@ Plugin installieren:
 ```bash
 php bin/atoll plugin:install /pfad/zum/plugin --enable
 php bin/atoll plugin:install:registry i18n --enable
+php bin/atoll plugin:install:registry booking-pro --enable --license=YOUR_KEY
 php bin/atoll plugin:list
 ```
 
@@ -175,11 +176,14 @@ Theme installieren:
 ```bash
 php bin/atoll theme:install /pfad/zum/theme
 php bin/atoll theme:install:registry business
+php bin/atoll theme:install:registry studio-pro --license=YOUR_KEY
 php bin/atoll theme:install:registry editorial
 php bin/atoll theme:install:registry portfolio
 php bin/atoll theme:list
 php bin/atoll theme:activate business
 ```
+
+Marketplace-Lizenzen werden unter `content/data/licenses.yaml` gespeichert.
 
 Preset-Content passend zum Theme anwenden:
 
@@ -254,10 +258,12 @@ php bin/atoll core:migrate
 php bin/atoll plugin:list
 php bin/atoll plugin:install /path/to/plugin --enable
 php bin/atoll plugin:install:registry i18n --enable
+php bin/atoll plugin:install:registry booking-pro --enable --license=YOUR_KEY
 php bin/atoll theme:list
 php bin/atoll theme:activate business
 php bin/atoll theme:install /path/to/theme
 php bin/atoll theme:install:registry business
+php bin/atoll theme:install:registry studio-pro --license=YOUR_KEY
 php bin/atoll preset:list
 php bin/atoll preset:apply business
 ```

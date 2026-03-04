@@ -4,27 +4,46 @@
     "name": "i18n",
     "type": "official",
     "description": "Multi language routing and hreflang support",
-    "source": "plugins/i18n"
+    "source": "plugins/i18n",
+    "seller": "atoll-cms",
+    "price_eur": 0
   },
   {
     "id": "analytics",
     "name": "analytics",
     "type": "official",
     "description": "Consent-aware analytics integration",
-    "source": "plugins/analytics"
+    "source": "plugins/analytics",
+    "seller": "atoll-cms",
+    "price_eur": 0
   },
   {
     "id": "forms-pro",
     "name": "forms-pro",
     "type": "official",
     "description": "Advanced forms features",
-    "source": "plugins/forms-pro"
+    "source": "plugins/forms-pro",
+    "seller": "atoll-cms",
+    "price_eur": 0
   },
   {
     "id": "shop",
     "name": "shop",
     "type": "official",
     "description": "Lightweight ecommerce module",
-    "source": "plugins/shop"
+    "source": "plugins/shop",
+    "seller": "atoll-cms",
+    "price_eur": 0
+  },
+  {
+    "id": "booking-pro",
+    "name": "Booking Pro",
+    "type": "marketplace",
+    "description": "Terminbuchung mit Slot-Management, E-Mail-Benachrichtigungen und iCal-Export.",
+    "source": "plugins/booking-pro",
+    "seller": "atoll labs",
+    "price_eur": 89,
+    "requires_license": true,
+    "checkout_url": "https://atoll-cms.com/marketplace/plugins/booking-pro"
   }
 ]

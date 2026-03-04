@@ -364,18 +364,58 @@ final class AdminController
     private function pluginRegistry(): Response
     {
         $file = $this->root . '/content/data/plugin-registry.json';
+        $registry = PackageInstaller::loadRegistry($file);
+        $licenses = PackageInstaller::loadLicenses($this->root);
+        $pluginState = [];
+        foreach ($this->plugins->list() as $plugin) {
+            $pluginId = (string) ($plugin['id'] ?? '');
+            if ($pluginId === '') {
+                continue;
+            }
+            $pluginState[$pluginId] = [
+                'installed' => true,
+                'active' => (bool) ($plugin['active'] ?? false),
+            ];
+        }
+
+        foreach ($registry as &$entry) {
+            $id = (string) ($entry['id'] ?? '');
+            if ($id === '') {
+                continue;
+            }
+            $entry['installed'] = (bool) ($pluginState[$id]['installed'] ?? false);
+            $entry['active'] = (bool) ($pluginState[$id]['active'] ?? false);
+            $entry['has_license'] = trim((string) ($licenses['plugins'][$id] ?? '')) !== '';
+        }
+        unset($entry);
+
         return Response::json([
             'ok' => true,
-            'registry' => PackageInstaller::loadRegistry($file),
+            'registry' => $registry,
         ]);
     }
 
     private function themeRegistry(): Response
     {
         $file = $this->root . '/content/data/theme-registry.json';
+        $registry = PackageInstaller::loadRegistry($file);
+        $licenses = PackageInstaller::loadLicenses($this->root);
+        $themes = $this->availableThemes();
+
+        foreach ($registry as &$entry) {
+            $id = (string) ($entry['id'] ?? '');
+            if ($id === '') {
+                continue;
+            }
+            $entry['installed'] = isset($themes[$id]);
+            $entry['active'] = (bool) ($themes[$id]['active'] ?? false);
+            $entry['has_license'] = trim((string) ($licenses['themes'][$id] ?? '')) !== '';
+        }
+        unset($entry);
+
         return Response::json([
             'ok' => true,
-            'registry' => PackageInstaller::loadRegistry($file),
+            'registry' => $registry,
         ]);
     }
 
@@ -386,10 +426,18 @@ final class AdminController
         $id = trim((string) ($payload['id'] ?? ''));
         $force = (bool) ($payload['force'] ?? false);
         $enable = (bool) ($payload['enable'] ?? true);
+        $licenseKey = trim((string) ($payload['license_key'] ?? ''));
 
         try {
             $result = $id !== ''
-                ? PackageInstaller::installPluginFromRegistry($this->root, $id, $force, $enable, $this->config)
+                ? PackageInstaller::installPluginFromRegistry(
+                    $this->root,
+                    $id,
+                    $force,
+                    $enable,
+                    $this->config,
+                    $licenseKey !== '' ? $licenseKey : null
+                )
                 : PackageInstaller::installPlugin($this->root, $source, $force, $enable, $this->config);
         } catch (RuntimeException $e) {
             return Response::json(['error' => $e->getMessage()], 422);
@@ -429,10 +477,17 @@ final class AdminController
         $source = trim((string) ($payload['source'] ?? ''));
         $id = trim((string) ($payload['id'] ?? ''));
         $force = (bool) ($payload['force'] ?? false);
+        $licenseKey = trim((string) ($payload['license_key'] ?? ''));
 
         try {
             $result = $id !== ''
-                ? PackageInstaller::installThemeFromRegistry($this->root, $id, $force, $this->config)
+                ? PackageInstaller::installThemeFromRegistry(
+                    $this->root,
+                    $id,
+                    $force,
+                    $this->config,
+                    $licenseKey !== '' ? $licenseKey : null
+                )
                 : PackageInstaller::installTheme($this->root, $source, $force, $this->config);
         } catch (RuntimeException $e) {
             return Response::json(['error' => $e->getMessage()], 422);

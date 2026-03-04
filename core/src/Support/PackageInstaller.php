@@ -18,14 +18,15 @@ final class PackageInstaller
         string $source,
         bool $force = false,
         bool $enable = false,
-        array $config = []
+        array $config = [],
+        ?string $targetId = null
     ): array {
         $sourceDir = self::resolveInstallSource($root, $source, 'plugin', $config);
         if (!is_file($sourceDir . '/plugin.php')) {
             throw new RuntimeException('Invalid plugin package: plugin.php missing at root.');
         }
 
-        $id = self::normalizePackageId(basename($sourceDir));
+        $id = self::normalizePackageId($targetId ?? basename($sourceDir));
         $dest = rtrim($root, '/') . '/plugins/' . $id;
         $sourceReal = realpath($sourceDir);
         $destReal = realpath($dest);
@@ -86,21 +87,29 @@ final class PackageInstaller
         string $id,
         bool $force = false,
         bool $enable = true,
-        array $config = []
+        array $config = [],
+        ?string $licenseKey = null
     ): array {
         $normalizedId = self::normalizePackageId($id);
         $localPlugin = self::resolveLocalPluginRepository($root, $normalizedId, $config);
         if ($localPlugin !== null) {
+            if ($licenseKey !== null && trim($licenseKey) !== '') {
+                self::setStoredLicense($root, 'plugins', $normalizedId, trim($licenseKey));
+            }
             return self::linkPluginFromLocalRepository($root, $normalizedId, $localPlugin, $force, $enable);
         }
 
         $entry = self::findRegistryEntry(rtrim($root, '/') . '/content/data/plugin-registry.json', $id);
-        $source = (string) ($entry['source'] ?? '');
-        if ($source === '') {
-            throw new RuntimeException("Registry entry '{$id}' has no source.");
+        $resolved = self::resolveRegistryInstallSource($root, $entry, 'plugins', $normalizedId, $licenseKey);
+        $result = self::installPlugin($root, $resolved['source'], $force, $enable, $config, $normalizedId);
+        if ($resolved['license_key'] !== null) {
+            $result['license_saved'] = true;
+        }
+        if (($resolved['requires_license'] ?? false) === true) {
+            $result['requires_license'] = true;
         }
 
-        return self::installPlugin($root, $source, $force, $enable, $config);
+        return $result;
     }
 
     /**
@@ -111,21 +120,29 @@ final class PackageInstaller
         string $root,
         string $id,
         bool $force = false,
-        array $config = []
+        array $config = [],
+        ?string $licenseKey = null
     ): array {
         $normalizedId = self::normalizePackageId($id);
         $localTheme = self::resolveLocalThemeRepository($root, $normalizedId, $config);
         if ($localTheme !== null) {
+            if ($licenseKey !== null && trim($licenseKey) !== '') {
+                self::setStoredLicense($root, 'themes', $normalizedId, trim($licenseKey));
+            }
             return self::linkThemeFromLocalRepository($root, $normalizedId, $localTheme, $force);
         }
 
         $entry = self::findRegistryEntry(rtrim($root, '/') . '/content/data/theme-registry.json', $id);
-        $source = (string) ($entry['source'] ?? '');
-        if ($source === '') {
-            throw new RuntimeException("Registry entry '{$id}' has no source.");
+        $resolved = self::resolveRegistryInstallSource($root, $entry, 'themes', $normalizedId, $licenseKey);
+        $result = self::installTheme($root, $resolved['source'], $force, $config, $normalizedId);
+        if ($resolved['license_key'] !== null) {
+            $result['license_saved'] = true;
+        }
+        if (($resolved['requires_license'] ?? false) === true) {
+            $result['requires_license'] = true;
         }
 
-        return self::installTheme($root, $source, $force, $config, $id);
+        return $result;
     }
 
     /**
@@ -275,6 +292,153 @@ final class PackageInstaller
         }
 
         self::rrmdir($destination);
+    }
+
+    /**
+     * @param array<string, mixed> $entry
+     * @return array{source: string, license_key: ?string, requires_license: bool}
+     */
+    private static function resolveRegistryInstallSource(
+        string $root,
+        array $entry,
+        string $licenseGroup,
+        string $id,
+        ?string $licenseKey
+    ): array {
+        $providedLicense = trim((string) ($licenseKey ?? ''));
+        $storedLicense = self::getStoredLicense($root, $licenseGroup, $id);
+        $effectiveLicense = $providedLicense !== '' ? $providedLicense : $storedLicense;
+
+        $requiresLicense = (bool) ($entry['requires_license'] ?? false);
+        $source = trim((string) ($entry['source'] ?? ''));
+        if ($source === '') {
+            $source = trim((string) ($entry['source_url'] ?? ''));
+        }
+        if ($source === '') {
+            $source = trim((string) ($entry['download_url'] ?? ''));
+        }
+        if ($source === '') {
+            $source = trim((string) ($entry['source_template'] ?? ''));
+        }
+        if ($source === '') {
+            $source = trim((string) ($entry['source_url_template'] ?? ''));
+        }
+        if ($source === '') {
+            $source = trim((string) ($entry['download_url_template'] ?? ''));
+        }
+        if ($source === '') {
+            throw new RuntimeException("Registry entry '{$id}' has no source.");
+        }
+
+        if (str_contains($source, '{license_key}')) {
+            $requiresLicense = true;
+            if ($effectiveLicense === '') {
+                throw new RuntimeException("License key required for '{$id}'.");
+            }
+            $source = str_replace('{license_key}', rawurlencode($effectiveLicense), $source);
+        } elseif ($requiresLicense && $effectiveLicense === '') {
+            throw new RuntimeException("License key required for '{$id}'.");
+        }
+
+        if ($providedLicense !== '') {
+            self::setStoredLicense($root, $licenseGroup, $id, $providedLicense);
+            $effectiveLicense = $providedLicense;
+        }
+
+        return [
+            'source' => $source,
+            'license_key' => $effectiveLicense !== '' ? $effectiveLicense : null,
+            'requires_license' => $requiresLicense,
+        ];
+    }
+
+    /**
+     * @return array<string, array<string, string>>
+     */
+    public static function loadLicenses(string $root): array
+    {
+        $file = self::licenseFile($root);
+        if (!is_file($file)) {
+            return ['plugins' => [], 'themes' => []];
+        }
+
+        $data = Yaml::parse((string) file_get_contents($file));
+        if (!is_array($data)) {
+            return ['plugins' => [], 'themes' => []];
+        }
+
+        $normalizeGroup = static function (mixed $group): array {
+            if (!is_array($group)) {
+                return [];
+            }
+            $rows = [];
+            foreach ($group as $id => $key) {
+                if (!is_string($id)) {
+                    continue;
+                }
+                $license = trim((string) $key);
+                if ($license !== '') {
+                    $rows[$id] = $license;
+                }
+            }
+            ksort($rows);
+            return $rows;
+        };
+
+        return [
+            'plugins' => $normalizeGroup($data['plugins'] ?? []),
+            'themes' => $normalizeGroup($data['themes'] ?? []),
+        ];
+    }
+
+    public static function setStoredLicense(string $root, string $group, string $id, string $licenseKey): void
+    {
+        $group = strtolower(trim($group));
+        if (!in_array($group, ['plugins', 'themes'], true)) {
+            throw new RuntimeException('Invalid license group: ' . $group);
+        }
+
+        $licenseKey = trim($licenseKey);
+        if ($licenseKey === '') {
+            throw new RuntimeException('License key cannot be empty.');
+        }
+
+        $licenses = self::loadLicenses($root);
+        $licenses[$group][$id] = $licenseKey;
+        self::saveLicenses($root, $licenses);
+    }
+
+    public static function getStoredLicense(string $root, string $group, string $id): string
+    {
+        $group = strtolower(trim($group));
+        if (!in_array($group, ['plugins', 'themes'], true)) {
+            return '';
+        }
+
+        $licenses = self::loadLicenses($root);
+        return trim((string) ($licenses[$group][$id] ?? ''));
+    }
+
+    /**
+     * @param array<string, array<string, string>> $licenses
+     */
+    private static function saveLicenses(string $root, array $licenses): void
+    {
+        $normalized = [
+            'plugins' => is_array($licenses['plugins'] ?? null) ? $licenses['plugins'] : [],
+            'themes' => is_array($licenses['themes'] ?? null) ? $licenses['themes'] : [],
+        ];
+
+        $file = self::licenseFile($root);
+        if (!is_dir(dirname($file))) {
+            mkdir(dirname($file), 0775, true);
+        }
+        file_put_contents($file, Yaml::dump($normalized));
+    }
+
+    private static function licenseFile(string $root): string
+    {
+        return rtrim($root, '/') . '/content/data/licenses.yaml';
     }
 
     /**

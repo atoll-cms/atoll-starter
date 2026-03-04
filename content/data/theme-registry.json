@@ -5,7 +5,9 @@
     "type": "official",
     "description": "Official external theme for corporate/service websites",
     "preview": "https://raw.githubusercontent.com/atoll-cms/atoll-theme-business/main/assets/preview.png",
-    "source": "https://github.com/atoll-cms/atoll-theme-business/archive/refs/heads/main.zip"
+    "source": "https://github.com/atoll-cms/atoll-theme-business/archive/refs/heads/main.zip",
+    "seller": "atoll-cms",
+    "price_eur": 0
   },
   {
     "id": "editorial",
@@ -13,7 +15,9 @@
     "type": "official",
     "description": "Official external theme for docs/blog style sites",
     "preview": "https://raw.githubusercontent.com/atoll-cms/atoll-theme-editorial/main/assets/preview.png",
-    "source": "https://github.com/atoll-cms/atoll-theme-editorial/archive/refs/heads/main.zip"
+    "source": "https://github.com/atoll-cms/atoll-theme-editorial/archive/refs/heads/main.zip",
+    "seller": "atoll-cms",
+    "price_eur": 0
   },
   {
     "id": "portfolio",
@@ -21,6 +25,20 @@
     "type": "official",
     "description": "Official external theme for visual showcase sites",
     "preview": "https://raw.githubusercontent.com/atoll-cms/atoll-theme-portfolio/main/assets/preview.png",
-    "source": "https://github.com/atoll-cms/atoll-theme-portfolio/archive/refs/heads/main.zip"
+    "source": "https://github.com/atoll-cms/atoll-theme-portfolio/archive/refs/heads/main.zip",
+    "seller": "atoll-cms",
+    "price_eur": 0
+  },
+  {
+    "id": "studio-pro",
+    "name": "Studio Pro Theme",
+    "type": "marketplace",
+    "description": "Premium Business-Theme mit erweiterten Landing-Sections und Conversion-Komponenten.",
+    "preview": "/themes/default/assets/preview.png",
+    "source": "themes/default",
+    "seller": "atoll labs",
+    "price_eur": 129,
+    "requires_license": true,
+    "checkout_url": "https://atoll-cms.com/marketplace/themes/studio-pro"
   }
 ]

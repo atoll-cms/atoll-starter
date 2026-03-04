@@ -5,13 +5,22 @@ Reproduzierbare HTTP-Benchmarks fuer atoll, WordPress, Kirby und Grav.
 ## Voraussetzungen
 
 - Alle Testsysteme laufen lokal auf festen Ports:
-  - atoll: `http://127.0.0.1:8080/`
-  - WordPress: `http://127.0.0.1:8081/`
-  - Kirby: `http://127.0.0.1:8082/`
-  - Grav: `http://127.0.0.1:8083/`
+  - atoll: `http://localhost:8080/`
+  - WordPress: `http://localhost:8081/`
+  - Kirby: `http://localhost:8082/`
+  - Grav: `http://localhost:8083/`
 - Gleiche Host-Maschine, gleiche Netzbedingungen, gleiche Seitenart (z. B. Home + Artikelseite).
 
 Die Targets stehen in `benchmarks/targets.yaml`.
+
+Vor dem Run Erreichbarkeit pruefen:
+
+```bash
+curl -s -o /dev/null -w 'atoll %{http_code}\n' http://localhost:8080/
+curl -s -o /dev/null -w 'wp %{http_code}\n' http://localhost:8081/
+curl -s -o /dev/null -w 'kirby %{http_code}\n' http://localhost:8082/
+curl -s -o /dev/null -w 'grav %{http_code}\n' http://localhost:8083/
+```
 
 ## Run
 
@@ -23,6 +32,12 @@ Optional nur ein Ziel:
 
 ```bash
 php bin/atoll benchmark:run --only=atoll-home --rounds=5
+```
+
+Optional mit strenger Fehlerschwelle (Standard: `5` Prozent):
+
+```bash
+php bin/atoll benchmark:run --max-error-rate=1
 ```
 
 JSON-Output liegt unter `benchmarks/results/<timestamp>.json`.
@@ -47,3 +62,5 @@ php bin/atoll benchmark:report \
 - Keine aktiven Entwicklungs-Watcher parallel laufen lassen.
 - Mehrere Runden ausfuehren (`--rounds=3` oder mehr).
 - Ergebnisse mit denselben Requests/Concurrency-Werten vergleichen.
+- atoll-Rate-Limit fuer Benchmarks ausreichend hoch setzen (sonst viele `429`):
+  - `security.rate_limit.requests` in `config.yaml` temporaer deutlich erhoehen (z. B. `50000`) oder Benchmark-Last reduzieren.

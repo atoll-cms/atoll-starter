@@ -8,6 +8,8 @@
 /releases/
 /content/forms-submissions/*.jsonl
 /content/data/security-audit.jsonl
+/benchmarks/results/*.json
+/benchmarks/results/*.md
 /config/updater-public.pem
 /.DS_Store
 cache/

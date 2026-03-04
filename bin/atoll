@@ -51,6 +51,7 @@ $printHelp = static function (): void {
     echo "  atoll preset:apply <id> [--force] [--no-theme]   Apply content preset to project\n";
     echo "  atoll islands:build                              Build frontend bundles once\n";
     echo "  atoll benchmark:run [--config=<path>] [--out=<path>] [--rounds=<n>] [--only=<csv>]\n";
+    echo "                      [--max-error-rate=<percent>]\n";
     echo "                                                   Run HTTP benchmarks and write JSON report\n";
     echo "  atoll benchmark:report [--input=<json>] [--out=<md>]  Render markdown report from JSON\n";
 };
@@ -581,6 +582,7 @@ switch ($command) {
         $roundsRaw = getFlagValue($args, '--rounds');
         $rounds = max(1, (int) ($roundsRaw ?? 3));
         $only = getFlagValue($args, '--only');
+        $maxErrorRate = getFlagValue($args, '--max-error-rate');
 
         $benchmarkScript = $corePath . '/tools/benchmark-run.php';
         if (!is_file($benchmarkScript)) {
@@ -588,13 +590,14 @@ switch ($command) {
         }
 
         $command = sprintf(
-            'php %s --root=%s --config=%s --out=%s --rounds=%d%s',
+            'php %s --root=%s --config=%s --out=%s --rounds=%d%s%s',
             escapeshellarg($benchmarkScript),
             escapeshellarg($root),
             escapeshellarg($configFile),
             escapeshellarg($outFile),
             $rounds,
-            ($only !== null && trim($only) !== '') ? ' --only=' . escapeshellarg(trim($only)) : ''
+            ($only !== null && trim($only) !== '') ? ' --only=' . escapeshellarg(trim($only)) : '',
+            ($maxErrorRate !== null && trim($maxErrorRate) !== '') ? ' --max-error-rate=' . escapeshellarg(trim($maxErrorRate)) : ''
         );
         passthru($command, $exitCode);
         exit((int) $exitCode);

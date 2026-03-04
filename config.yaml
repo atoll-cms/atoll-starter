@@ -6,7 +6,7 @@ core:
   path: core
 updater:
   channel: stable
-  manifest_url: ''
+  manifest_url: https://raw.githubusercontent.com/atoll-cms/atoll-updates/main/channels/stable.json
   public_key: config/updater-public.pem
   require_signature: true
   timeout_seconds: 15

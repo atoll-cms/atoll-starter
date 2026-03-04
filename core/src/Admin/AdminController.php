@@ -138,6 +138,8 @@ final class AdminController
             $endpoint === '/themes/activate' && $request->method === 'POST' => $this->activateTheme($request),
             $endpoint === '/themes/uninstall' && $request->method === 'POST' => $this->uninstallTheme($request),
             $endpoint === '/media/upload' && $request->method === 'POST' => $this->uploadMedia($request),
+            $endpoint === '/media/list' && $request->method === 'GET' => $this->listMedia($request),
+            $endpoint === '/media/transform' && $request->method === 'POST' => $this->transformMedia($request),
             $endpoint === '/security/audit' && $request->method === 'GET' => $this->securityAudit($request),
             $endpoint === '/security/2fa/setup' && $request->method === 'POST' => $this->setupTwoFactor($request),
             $endpoint === '/security/2fa/disable' && $request->method === 'POST' => $this->disableTwoFactor($request),
@@ -381,6 +383,25 @@ final class AdminController
         }
 
         return Response::json($this->media->upload($file));
+    }
+
+    private function listMedia(Request $request): Response
+    {
+        $limit = (int) $request->input('limit', 200);
+        return Response::json($this->media->list($limit));
+    }
+
+    private function transformMedia(Request $request): Response
+    {
+        $payload = $request->isJson() ? $request->json() : $request->post;
+        $file = trim((string) ($payload['file'] ?? ''));
+        if ($file === '') {
+            return Response::json(['error' => 'Missing file'], 422);
+        }
+
+        $result = $this->media->transform($file, is_array($payload) ? $payload : []);
+        $status = (bool) ($result['ok'] ?? false) ? 200 : 422;
+        return Response::json($result, $status);
     }
 
     private function settings(): Response

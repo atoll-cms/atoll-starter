@@ -49,12 +49,17 @@ final class SeoManager
     public function sitemap(ContentRepository $content): string
     {
         $baseUrl = rtrim((string) Config::get($this->config, 'base_url', ''), '/');
-        $pages = $content->allPublicPages();
 
         $urls = [];
-        foreach ($pages as $page) {
-            $loc = htmlspecialchars($baseUrl . $page->url, ENT_QUOTES);
-            $lastMod = date('c', filemtime($page->sourcePath) ?: time());
+        foreach ($content->sitemapEntries() as $entry) {
+            $url = (string) ($entry['url'] ?? '');
+            $sourcePath = (string) ($entry['source_path'] ?? '');
+            if ($url === '') {
+                continue;
+            }
+
+            $loc = htmlspecialchars($baseUrl . $url, ENT_QUOTES);
+            $lastMod = date('c', filemtime($sourcePath) ?: time());
             $urls[] = "<url><loc>{$loc}</loc><lastmod>{$lastMod}</lastmod></url>";
         }
 

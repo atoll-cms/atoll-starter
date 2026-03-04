@@ -6,6 +6,7 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/core/src/bootstrap.php';
 
 use Atoll\Cache\CacheManager;
+use Atoll\Content\ContentRepository;
 use Atoll\Hooks\HookManager;
 use Atoll\Support\Config;
 use Atoll\Support\PackageInstaller;
@@ -27,6 +28,8 @@ $printHelp = static function (): void {
     echo "  atoll dev:local [port] [--activate=<id>]         Use sibling core repo, start dev\n";
     echo "                   [--force-links] [--setup-only]\n";
     echo "  atoll cache:clear                                Clear HTML cache\n";
+    echo "  atoll content:index:status                       Show content index status\n";
+    echo "  atoll content:index:rebuild                      Rebuild SQLite content index\n";
     echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
     echo "  atoll core:status                                Show active core path/version\n";
     echo "  atoll core:check [channel]                       Check update channel for newer core\n";
@@ -118,6 +121,57 @@ switch ($command) {
         );
         $cache->clear();
         echo "Cache cleared.\n";
+        exit(0);
+
+    case 'content:index:status':
+    case 'content:index:rebuild':
+        $content = makeContentRepository($root, $config);
+        if (!method_exists($content, 'indexStatus') || !method_exists($content, 'rebuildIndex')) {
+            echo "Content index commands require a newer core version.\n";
+            echo "Run: php bin/atoll core:update:remote stable\n";
+            exit(1);
+        }
+
+        if ($command === 'content:index:rebuild') {
+            $result = $content->rebuildIndex();
+            if (!$result['enabled']) {
+                echo "Content index is disabled.\n";
+                echo "Enable it in config.yaml with content.index.enabled: true\n";
+                exit(1);
+            }
+            echo "Content index rebuilt.\n";
+            echo "Indexed entries: " . (int) $result['indexed'] . "\n";
+            if ($result['path'] !== '') {
+                echo "Database: " . $result['path'] . "\n";
+            }
+            exit(0);
+        }
+
+        $status = $content->indexStatus();
+        if (!(bool) ($status['enabled'] ?? false)) {
+            echo "Content index: disabled\n";
+            $reason = (string) ($status['reason'] ?? '');
+            if ($reason !== '') {
+                echo "Reason: {$reason}\n";
+            }
+            echo "Enable in config.yaml:\n";
+            echo "content:\n";
+            echo "  index:\n";
+            echo "    enabled: true\n";
+            echo "    driver: sqlite\n";
+            echo "    path: cache/content-index.sqlite\n";
+            exit(0);
+        }
+
+        echo "Content index: enabled\n";
+        echo "Path: " . (string) ($status['path'] ?? '') . "\n";
+        echo "Entries: " . (int) ($status['entries'] ?? 0) . "\n";
+        echo "Last rebuild: " . ((string) ($status['last_rebuild_at'] ?? '') ?: 'n/a') . "\n";
+        echo "Last update: " . ((string) ($status['last_update_at'] ?? '') ?: 'n/a') . "\n";
+        $reason = trim((string) ($status['reason'] ?? ''));
+        if ($reason !== '') {
+            echo "Note: {$reason}\n";
+        }
         exit(0);
 
     case 'new':
@@ -582,6 +636,25 @@ function fail(string $message): never
 {
     fwrite(STDERR, $message . "\n");
     exit(1);
+}
+
+/**
+ * @param array<string, mixed> $config
+ */
+function makeContentRepository(string $root, array $config): ContentRepository
+{
+    $hooks = new HookManager();
+    $reflection = new ReflectionClass(ContentRepository::class);
+    $constructor = $reflection->getConstructor();
+    $parameterCount = $constructor?->getNumberOfParameters() ?? 0;
+
+    if ($parameterCount >= 4) {
+        /** @var ContentRepository */
+        return new ContentRepository($root . '/content', $hooks, $config, $root);
+    }
+
+    /** @var ContentRepository */
+    return new ContentRepository($root . '/content', $hooks);
 }
 
 /**

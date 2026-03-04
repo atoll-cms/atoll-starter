@@ -5,15 +5,44 @@ declare(strict_types=1);
 namespace Atoll\Content;
 
 use Atoll\Hooks\HookManager;
+use Atoll\Support\Config;
 use Atoll\Support\Markdown;
 use Atoll\Support\Yaml;
 
 final class ContentRepository
 {
+    private ?SqliteContentIndex $index = null;
+
+    /**
+     * @param array<string, mixed> $config
+     */
     public function __construct(
         private readonly string $contentRoot,
-        private readonly HookManager $hooks
+        private readonly HookManager $hooks,
+        array $config = [],
+        ?string $siteRoot = null
     ) {
+        $indexConfig = Config::get($config, 'content.index', []);
+        if (!is_array($indexConfig) || !(bool) ($indexConfig['enabled'] ?? false)) {
+            return;
+        }
+
+        $driver = strtolower(trim((string) ($indexConfig['driver'] ?? 'sqlite')));
+        if ($driver !== 'sqlite') {
+            return;
+        }
+
+        $path = trim((string) ($indexConfig['path'] ?? 'cache/content-index.sqlite'));
+        if ($path === '') {
+            $path = 'cache/content-index.sqlite';
+        }
+
+        if (!$this->isAbsolutePath($path)) {
+            $base = $siteRoot ?? dirname($this->contentRoot);
+            $path = rtrim($base, '/') . '/' . ltrim($path, '/');
+        }
+
+        $this->index = new SqliteContentIndex($this->contentRoot, $path);
     }
 
     /** @return array<int, string> */
@@ -33,6 +62,39 @@ final class ContentRepository
         return $collections;
     }
 
+    /**
+     * @return array{enabled:bool,available?:bool,path?:string,entries?:int,last_rebuild_at?:string,last_update_at?:string,reason:string}
+     */
+    public function indexStatus(): array
+    {
+        if ($this->index === null) {
+            return [
+                'enabled' => false,
+                'reason' => 'content.index.enabled is false',
+            ];
+        }
+
+        return $this->index->status();
+    }
+
+    /**
+     * @return array{enabled:bool,indexed:int,updated:int,removed:int,path:string}
+     */
+    public function rebuildIndex(): array
+    {
+        if ($this->index === null) {
+            return [
+                'enabled' => false,
+                'indexed' => 0,
+                'updated' => 0,
+                'removed' => 0,
+                'path' => '',
+            ];
+        }
+
+        return $this->index->rebuild();
+    }
+
     public function getPage(string $slug): ?Page
     {
         $slug = $slug === '' ? 'index' : trim($slug, '/');
@@ -46,8 +108,25 @@ final class ContentRepository
 
     public function getCollectionEntryBySlug(string $collection, string $slug): ?Page
     {
-        foreach ($this->listCollection($collection, true) as $entry) {
+        if ($this->index !== null) {
+            $meta = $this->index->findBySlug($collection, $slug, true);
+            if ($meta !== null) {
+                $entry = $this->fromFile($collection, (string) $meta['source_path'], null);
+                if ($entry !== null) {
+                    if ($entry->slug !== $slug) {
+                        $this->index->upsertFile($collection, $entry->sourcePath);
+                    } else {
+                        return $entry;
+                    }
+                }
+            }
+        }
+
+        foreach ($this->listCollectionFromFiles($collection, true) as $entry) {
             if ($entry->slug === $slug) {
+                if ($this->index !== null) {
+                    $this->index->upsertFile($collection, $entry->sourcePath);
+                }
                 return $entry;
             }
         }
@@ -58,39 +137,20 @@ final class ContentRepository
     /** @return array<int, Page> */
     public function listCollection(string $collection, bool $includeDraft = false): array
     {
-        $dir = $this->contentRoot . '/' . trim($collection, '/');
+        $collection = trim($collection, '/');
+        $dir = $this->contentRoot . '/' . $collection;
         if (!is_dir($dir)) {
             return [];
         }
 
-        $files = glob($dir . '/*.md') ?: [];
-        $items = [];
-
-        foreach ($files as $file) {
-            if (basename($file) === '_collection.md') {
-                continue;
+        if ($this->index !== null) {
+            $metaRows = $this->index->listCollection($collection, $includeDraft, $this->collectionMeta($collection));
+            if ($metaRows !== [] || !$this->collectionHasMarkdownFiles($collection)) {
+                return $this->listCollectionFromIndexedMeta($collection, $metaRows, $includeDraft);
             }
-            $entry = $this->fromFile($collection, $file, null);
-            if ($entry === null) {
-                continue;
-            }
-            if (!$includeDraft && (bool) ($entry->data['draft'] ?? false)) {
-                continue;
-            }
-            $items[] = $entry;
         }
 
-        $meta = $this->collectionMeta($collection);
-        $sort = (string) ($meta['sort'] ?? 'date desc');
-        [$field, $direction] = array_pad(explode(' ', $sort, 2), 2, 'desc');
-        usort($items, static function (Page $a, Page $b) use ($field, $direction): int {
-            $av = $a->data[$field] ?? '';
-            $bv = $b->data[$field] ?? '';
-            $cmp = $av <=> $bv;
-            return strtolower($direction) === 'asc' ? $cmp : -$cmp;
-        });
-
-        return $items;
+        return $this->listCollectionFromFiles($collection, $includeDraft);
     }
 
     /** @return array<string, mixed> */
@@ -101,7 +161,8 @@ final class ContentRepository
             return [];
         }
 
-        return Yaml::parse((string) file_get_contents($path));
+        $parsed = Yaml::parse((string) file_get_contents($path));
+        return is_array($parsed) ? $parsed : [];
     }
 
     /** @return array<string, mixed> */
@@ -131,6 +192,29 @@ final class ContentRepository
         return $this->fromFile($collection, $path, null);
     }
 
+    /**
+     * @return array<int, array{url:string,source_path:string}>
+     */
+    public function sitemapEntries(): array
+    {
+        if ($this->index !== null) {
+            $rows = $this->index->sitemapEntries();
+            if ($rows !== [] || !$this->hasPublicContentFiles()) {
+                return $rows;
+            }
+        }
+
+        $rows = [];
+        foreach ($this->allPublicPages() as $page) {
+            $rows[] = [
+                'url' => $page->url,
+                'source_path' => $page->sourcePath,
+            ];
+        }
+
+        return $rows;
+    }
+
     /** @param array<string, mixed> $frontmatter */
     public function save(string $collection, string $id, array $frontmatter, string $markdown): string
     {
@@ -147,6 +231,10 @@ final class ContentRepository
         $file = $dir . '/' . $id . '.md';
         $payload = "---\n" . Yaml::dump($frontmatter) . "---\n\n" . trim($markdown) . "\n";
         file_put_contents($file, $payload);
+
+        if ($this->index !== null) {
+            $this->index->upsertFile($collection, $file);
+        }
 
         $this->hooks->run('content:save', [
             'collection' => $collection,
@@ -167,6 +255,9 @@ final class ContentRepository
 
         $deleted = unlink($file);
         if ($deleted) {
+            if ($this->index !== null) {
+                $this->index->removeFile($file);
+            }
             $this->hooks->run('content:delete', ['collection' => $collection, 'id' => $id, 'file' => $file]);
         }
 
@@ -196,6 +287,10 @@ final class ContentRepository
 
     private function fromFile(string $collection, string $path, ?string $forcedUrl): ?Page
     {
+        if (!is_file($path)) {
+            return null;
+        }
+
         $raw = (string) file_get_contents($path);
         [$frontmatter, $markdown] = $this->splitFrontmatter($raw);
 
@@ -233,6 +328,123 @@ final class ContentRepository
             markdown: $markdown,
             content: $html
         );
+    }
+
+    /**
+     * @return array<int, Page>
+     */
+    private function listCollectionFromIndexedMeta(string $collection, array $metaRows, bool $includeDraft): array
+    {
+        $items = [];
+
+        foreach ($metaRows as $meta) {
+            if (!is_array($meta)) {
+                continue;
+            }
+
+            $sourcePath = (string) ($meta['source_path'] ?? '');
+            if ($sourcePath === '') {
+                continue;
+            }
+
+            $entry = $this->fromFile($collection, $sourcePath, null);
+            if ($entry === null) {
+                if ($this->index !== null) {
+                    $this->index->removeFile($sourcePath);
+                }
+                continue;
+            }
+            if (!$includeDraft && (bool) ($entry->data['draft'] ?? false)) {
+                continue;
+            }
+            if ($this->index !== null && (string) ($meta['slug'] ?? '') !== $entry->slug) {
+                $this->index->upsertFile($collection, $entry->sourcePath);
+            }
+            $items[] = $entry;
+        }
+
+        return $items;
+    }
+
+    /**
+     * @return array<int, Page>
+     */
+    private function listCollectionFromFiles(string $collection, bool $includeDraft): array
+    {
+        $dir = $this->contentRoot . '/' . trim($collection, '/');
+        if (!is_dir($dir)) {
+            return [];
+        }
+
+        $files = $this->collectionMarkdownFiles($collection);
+        $items = [];
+
+        foreach ($files as $file) {
+            $entry = $this->fromFile($collection, $file, null);
+            if ($entry === null) {
+                continue;
+            }
+            if (!$includeDraft && (bool) ($entry->data['draft'] ?? false)) {
+                continue;
+            }
+            $items[] = $entry;
+        }
+
+        $meta = $this->collectionMeta($collection);
+        $sort = (string) ($meta['sort'] ?? 'date desc');
+        [$field, $direction] = array_pad(explode(' ', $sort, 2), 2, 'desc');
+        usort($items, static function (Page $a, Page $b) use ($field, $direction): int {
+            $av = $a->data[$field] ?? '';
+            $bv = $b->data[$field] ?? '';
+            $cmp = $av <=> $bv;
+            return strtolower($direction) === 'asc' ? $cmp : -$cmp;
+        });
+
+        if ($this->index !== null) {
+            foreach ($items as $entry) {
+                $this->index->upsertFile($collection, $entry->sourcePath);
+            }
+        }
+
+        return $items;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function collectionMarkdownFiles(string $collection): array
+    {
+        $dir = $this->contentRoot . '/' . trim($collection, '/');
+        if (!is_dir($dir)) {
+            return [];
+        }
+
+        $files = glob($dir . '/*.md') ?: [];
+        $rows = [];
+        foreach ($files as $file) {
+            if (basename($file) === '_collection.md') {
+                continue;
+            }
+            $rows[] = $file;
+        }
+        sort($rows);
+        return $rows;
+    }
+
+    private function collectionHasMarkdownFiles(string $collection): bool
+    {
+        return $this->collectionMarkdownFiles($collection) !== [];
+    }
+
+    private function hasPublicContentFiles(): bool
+    {
+        foreach ($this->collections() as $collection) {
+            if ($this->collectionHasMarkdownFiles($collection)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return array{0:array<string,mixed>,1:string} */
@@ -356,5 +568,14 @@ final class ContentRepository
         }
 
         return true;
+    }
+
+    private function isAbsolutePath(string $path): bool
+    {
+        if (str_starts_with($path, '/')) {
+            return true;
+        }
+
+        return preg_match('/^[A-Za-z]:[\\\\\\/]/', $path) === 1;
     }
 }

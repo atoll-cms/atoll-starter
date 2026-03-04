@@ -13,6 +13,11 @@ updater:
 cache:
   enabled: true
   ttl: 3600
+content:
+  index:
+    enabled: false
+    driver: sqlite
+    path: cache/content-index.sqlite
 security:
   force_https: false
   hsts: false

@@ -649,9 +649,22 @@ function discoverFrontendBuildTargets(string $root, string $corePath, array $con
         ['label' => 'site-islands', 'path' => rtrim($root, '/') . '/islands-src'],
         ['label' => 'theme:' . $activeTheme, 'path' => rtrim($root, '/') . '/themes/' . $activeTheme . '/islands-src'],
         ['label' => 'theme:' . $activeTheme, 'path' => rtrim($root, '/') . '/themes/' . $activeTheme],
-        ['label' => 'core-theme:' . $activeTheme, 'path' => rtrim($corePath, '/') . '/themes/' . $activeTheme . '/islands-src'],
-        ['label' => 'core-theme:' . $activeTheme, 'path' => rtrim($corePath, '/') . '/themes/' . $activeTheme],
     ];
+
+    $themeRoots = [
+        ['label_prefix' => 'theme', 'path' => rtrim($root, '/') . '/themes'],
+        ['label_prefix' => 'core-theme', 'path' => rtrim($corePath, '/') . '/themes'],
+    ];
+
+    foreach ($themeRoots as $themeRoot) {
+        $dirs = glob(rtrim((string) $themeRoot['path'], '/') . '/*', GLOB_ONLYDIR) ?: [];
+        foreach ($dirs as $dir) {
+            $themeId = basename($dir);
+            $prefix = (string) ($themeRoot['label_prefix'] ?? 'theme');
+            $candidates[] = ['label' => $prefix . ':' . $themeId, 'path' => $dir . '/islands-src'];
+            $candidates[] = ['label' => $prefix . ':' . $themeId, 'path' => $dir];
+        }
+    }
 
     $pluginDirs = glob(rtrim($root, '/') . '/plugins/*', GLOB_ONLYDIR) ?: [];
     foreach ($pluginDirs as $pluginDir) {

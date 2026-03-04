@@ -22,7 +22,8 @@ $corePath = resolveCorePath($root, $config);
 $printHelp = static function (): void {
     echo "atoll-cms CLI\n\n";
     echo "Commands:\n";
-    echo "  atoll serve|dev [port]                           Start local PHP server\n";
+    echo "  atoll serve [port]                               Build frontend bundles once, then start server\n";
+    echo "  atoll dev [port]                                 Watch frontend bundles and start server\n";
     echo "  atoll cache:clear                                Clear HTML cache\n";
     echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
     echo "  atoll core:status                                Show active core path/version\n";
@@ -45,17 +46,25 @@ $printHelp = static function (): void {
     echo "  atoll theme:install:registry <id> [--force]      Install theme via theme-registry.json\n";
     echo "  atoll preset:list                                List starter content presets\n";
     echo "  atoll preset:apply <id> [--force] [--no-theme]   Apply content preset to project\n";
-    echo "  atoll islands:build                              Build hint for island bundles\n";
+    echo "  atoll islands:build                              Build frontend bundles once\n";
 };
 
 switch ($command) {
     case 'dev':
+        $port = (int) ($args[1] ?? 8080);
+        $watchers = startFrontendWatchers($root, $corePath, $config);
+        register_shutdown_function(static function () use (&$watchers): void {
+            stopBackgroundProcesses($watchers);
+        });
+        $exitCode = runPhpServer($root, $port);
+        stopBackgroundProcesses($watchers);
+        exit($exitCode);
+
     case 'serve':
         $port = (int) ($args[1] ?? 8080);
-        $cmd = sprintf('php -S localhost:%d -t %s %s/index.php', $port, escapeshellarg($root), escapeshellarg($root));
-        echo "Starting atoll-cms on http://localhost:{$port}\n";
-        passthru($cmd);
-        exit(0);
+        runFrontendBuildsOnce($root, $corePath, $config);
+        $exitCode = runPhpServer($root, $port);
+        exit($exitCode);
 
     case 'cache:clear':
         $cache = new CacheManager(
@@ -493,8 +502,8 @@ switch ($command) {
         exit(0);
 
     case 'islands:build':
-        echo "Build islands locally with Vite and commit bundles to /core/islands/dist or /islands/dist.\n";
-        echo "Server runtime does not require Node.js.\n";
+        $built = runFrontendBuildsOnce($root, $corePath, $config);
+        echo $built > 0 ? "Frontend bundles built.\n" : "No frontend source packages detected.\n";
         exit(0);
 
     case 'help':
@@ -507,6 +516,282 @@ function fail(string $message): never
 {
     fwrite(STDERR, $message . "\n");
     exit(1);
+}
+
+function runPhpServer(string $root, int $port): int
+{
+    $cmd = sprintf('php -S localhost:%d -t %s %s/index.php', $port, escapeshellarg($root), escapeshellarg($root));
+    echo "Starting atoll-cms on http://localhost:{$port}\n";
+    passthru($cmd, $exitCode);
+    return (int) $exitCode;
+}
+
+/**
+ * @param array<string, mixed> $config
+ */
+function runFrontendBuildsOnce(string $root, string $corePath, array $config): int
+{
+    $targets = discoverFrontendBuildTargets($root, $corePath, $config);
+    if ($targets === []) {
+        return 0;
+    }
+
+    ensureNpmAvailable();
+    echo "Building frontend bundles...\n";
+    $builtCount = 0;
+
+    foreach ($targets as $target) {
+        $command = resolveFrontendCommand($target['scripts'], false);
+        if ($command === null) {
+            echo "Skipping {$target['label']} (no build/watch/dev script found): {$target['path']}\n";
+            continue;
+        }
+
+        echo "-> {$target['label']} ({$target['path']})\n";
+        $exitCode = runCommandInDirectory($command, $target['path']);
+        if ($exitCode !== 0) {
+            fail("Frontend build failed for {$target['label']} ({$target['path']}).");
+        }
+        $builtCount++;
+    }
+
+    return $builtCount;
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return array<int, array{label:string,path:string,command:string,process:resource}>
+ */
+function startFrontendWatchers(string $root, string $corePath, array $config): array
+{
+    $targets = discoverFrontendBuildTargets($root, $corePath, $config);
+    if ($targets === []) {
+        return [];
+    }
+
+    ensureNpmAvailable();
+    echo "Starting frontend watchers...\n";
+    $watchers = [];
+
+    foreach ($targets as $target) {
+        $command = resolveFrontendCommand($target['scripts'], true);
+        if ($command === null) {
+            echo "Skipping {$target['label']} (no watch/build/dev script found): {$target['path']}\n";
+            continue;
+        }
+
+        echo "-> {$target['label']} ({$target['path']})\n";
+        $process = startBackgroundProcess($command, $target['path']);
+        if (!is_resource($process)) {
+            fail("Could not start frontend watcher for {$target['label']} ({$target['path']}).");
+        }
+
+        usleep(250000);
+        $status = proc_get_status($process);
+        if (!is_array($status) || ($status['running'] ?? false) !== true) {
+            proc_close($process);
+            fail("Frontend watcher exited immediately for {$target['label']} ({$target['path']}).");
+        }
+
+        $watchers[] = [
+            'label' => $target['label'],
+            'path' => $target['path'],
+            'command' => $command,
+            'process' => $process,
+        ];
+    }
+
+    return $watchers;
+}
+
+/**
+ * @param array<int, array{label:string,path:string,command:string,process:resource}> $watchers
+ */
+function stopBackgroundProcesses(array &$watchers): void
+{
+    foreach ($watchers as $watcher) {
+        $process = $watcher['process'] ?? null;
+        if (!is_resource($process)) {
+            continue;
+        }
+
+        $status = proc_get_status($process);
+        if (is_array($status) && ($status['running'] ?? false) === true) {
+            proc_terminate($process);
+            usleep(200000);
+
+            $status = proc_get_status($process);
+            if (is_array($status) && ($status['running'] ?? false) === true) {
+                proc_terminate($process, 9);
+            }
+        }
+
+        proc_close($process);
+    }
+
+    $watchers = [];
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return array<int, array{label:string,path:string,scripts:array<string,string>}>
+ */
+function discoverFrontendBuildTargets(string $root, string $corePath, array $config): array
+{
+    $activeTheme = trim((string) Config::get($config, 'appearance.theme', 'default'));
+    if ($activeTheme === '') {
+        $activeTheme = 'default';
+    }
+
+    $candidates = [
+        ['label' => 'core-admin', 'path' => rtrim($corePath, '/') . '/admin-src'],
+        ['label' => 'core-islands', 'path' => rtrim($corePath, '/') . '/islands-src'],
+        ['label' => 'site-islands', 'path' => rtrim($root, '/') . '/islands-src'],
+        ['label' => 'theme:' . $activeTheme, 'path' => rtrim($root, '/') . '/themes/' . $activeTheme . '/islands-src'],
+        ['label' => 'theme:' . $activeTheme, 'path' => rtrim($root, '/') . '/themes/' . $activeTheme],
+        ['label' => 'core-theme:' . $activeTheme, 'path' => rtrim($corePath, '/') . '/themes/' . $activeTheme . '/islands-src'],
+        ['label' => 'core-theme:' . $activeTheme, 'path' => rtrim($corePath, '/') . '/themes/' . $activeTheme],
+    ];
+
+    $pluginDirs = glob(rtrim($root, '/') . '/plugins/*', GLOB_ONLYDIR) ?: [];
+    foreach ($pluginDirs as $pluginDir) {
+        $pluginId = basename($pluginDir);
+        $candidates[] = ['label' => 'plugin:' . $pluginId, 'path' => $pluginDir . '/islands-src'];
+        $candidates[] = ['label' => 'plugin:' . $pluginId, 'path' => $pluginDir];
+    }
+
+    $targets = [];
+    $seen = [];
+
+    foreach ($candidates as $candidate) {
+        $path = rtrim((string) ($candidate['path'] ?? ''), '/');
+        if ($path === '') {
+            continue;
+        }
+
+        $packageFile = $path . '/package.json';
+        if (!is_file($packageFile)) {
+            continue;
+        }
+
+        $realPath = realpath($path);
+        $normalizedPath = $realPath !== false ? rtrim($realPath, '/') : $path;
+        if (isset($seen[$normalizedPath])) {
+            continue;
+        }
+
+        $scripts = readPackageScripts($packageFile);
+        if (!isset($scripts['watch']) && !isset($scripts['build']) && !isset($scripts['dev'])) {
+            continue;
+        }
+
+        $targets[] = [
+            'label' => (string) ($candidate['label'] ?? 'frontend'),
+            'path' => $normalizedPath,
+            'scripts' => $scripts,
+        ];
+        $seen[$normalizedPath] = true;
+    }
+
+    usort(
+        $targets,
+        static fn (array $a, array $b): int => strcmp($a['label'] . '|' . $a['path'], $b['label'] . '|' . $b['path'])
+    );
+
+    return $targets;
+}
+
+/**
+ * @return array<string, string>
+ */
+function readPackageScripts(string $packageFile): array
+{
+    $content = file_get_contents($packageFile);
+    if ($content === false) {
+        return [];
+    }
+
+    $decoded = json_decode($content, true);
+    if (!is_array($decoded) || !is_array($decoded['scripts'] ?? null)) {
+        return [];
+    }
+
+    $scripts = [];
+    foreach ($decoded['scripts'] as $name => $command) {
+        if (is_string($name) && $name !== '' && is_string($command) && $command !== '') {
+            $scripts[$name] = $command;
+        }
+    }
+
+    return $scripts;
+}
+
+/**
+ * @param array<string, string> $scripts
+ */
+function resolveFrontendCommand(array $scripts, bool $watchMode): ?string
+{
+    if ($watchMode) {
+        if (isset($scripts['watch'])) {
+            return 'npm run watch';
+        }
+        if (isset($scripts['build'])) {
+            return 'npm run build -- --watch';
+        }
+        if (isset($scripts['dev'])) {
+            return 'npm run dev';
+        }
+
+        return null;
+    }
+
+    if (isset($scripts['build'])) {
+        return 'npm run build';
+    }
+    if (isset($scripts['watch'])) {
+        return 'npm run watch';
+    }
+    if (isset($scripts['dev'])) {
+        return 'npm run dev';
+    }
+
+    return null;
+}
+
+function ensureNpmAvailable(): void
+{
+    $exitCode = runCommandSilently('command -v npm >/dev/null 2>&1');
+    if ($exitCode !== 0) {
+        fail('Frontend sources detected but npm is not available. Install Node.js/npm or remove source packages.');
+    }
+}
+
+function runCommandSilently(string $command): int
+{
+    exec($command, $output, $exitCode);
+    return (int) $exitCode;
+}
+
+function runCommandInDirectory(string $command, string $cwd): int
+{
+    $full = sprintf('cd %s && %s', escapeshellarg($cwd), $command);
+    passthru($full, $exitCode);
+    return (int) $exitCode;
+}
+
+/**
+ * @return resource|false
+ */
+function startBackgroundProcess(string $command, string $cwd)
+{
+    $nullDevice = DIRECTORY_SEPARATOR === '\\' ? 'NUL' : '/dev/null';
+    $descriptorSpec = [
+        0 => ['file', $nullDevice, 'r'],
+        1 => ['file', 'php://stdout', 'w'],
+        2 => ['file', 'php://stderr', 'w'],
+    ];
+
+    return proc_open($command, $descriptorSpec, $pipes, $cwd);
 }
 
 /** @param array<string, mixed> $config */

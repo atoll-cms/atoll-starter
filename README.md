@@ -58,6 +58,10 @@ composer install
 php bin/atoll dev 8080
 ```
 
+Alternativen:
+- `php bin/atoll dev 8080` startet Watch-Mode fuer Frontend-Bundles (z. B. `core/admin-src`, aktive Theme-/Plugin-`islands-src`) und den PHP-Server.
+- `php bin/atoll serve 8080` baut Frontend-Bundles einmalig und startet dann den PHP-Server.
+
 3. Frontend/Admin:
 - [http://localhost:8080](http://localhost:8080)
 - [http://localhost:8080/admin](http://localhost:8080/admin)

@@ -10,3 +10,7 @@
 /content/data/security-audit.jsonl
 /config/updater-public.pem
 /.DS_Store
+cache/
+.playwright-cli/
+backups/
+output/

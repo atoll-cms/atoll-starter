@@ -77,9 +77,16 @@ final class App
         );
         $pluginManager->load();
 
+        $environment = strtolower((string) Config::get($this->config, 'environment', 'prod'));
+        $cacheEnabled = (bool) Config::get($this->config, 'cache.enabled', true);
+        $cacheEnabledInDev = (bool) Config::get($this->config, 'cache.dev_enabled', false);
+        if ($environment === 'dev' && !$cacheEnabledInDev) {
+            $cacheEnabled = false;
+        }
+
         $cache = new CacheManager(
             cacheDir: $this->root . '/cache',
-            enabled: (bool) Config::get($this->config, 'cache.enabled', true),
+            enabled: $cacheEnabled,
             hooks: $hooks,
             ttl: (int) Config::get($this->config, 'cache.ttl', 3600)
         );

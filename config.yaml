@@ -3,7 +3,7 @@ base_url: 'http://localhost:8080'
 environment: dev
 timezone: Europe/Berlin
 core:
-  path: core
+  path: ../atoll-core
 updater:
   channel: stable
   manifest_url: 'https://raw.githubusercontent.com/atoll-cms/atoll-updates/main/channels/stable.json'
@@ -57,7 +57,7 @@ features:
   backup_core: true
   redirects_core: true
 appearance:
-  theme: default
+  theme: business
 plugins:
   defaults_enabled: true
 analytics:

@@ -204,6 +204,7 @@ final class InstallerController
                     'type' => 'official',
                     'source' => 'https://github.com/atoll-cms/atoll-theme-business/archive/refs/heads/main.zip',
                     'description' => 'Official external theme for corporate/service websites',
+                    'preview' => 'https://raw.githubusercontent.com/atoll-cms/atoll-theme-business/main/assets/preview.png',
                 ],
                 [
                     'id' => 'editorial',
@@ -211,6 +212,7 @@ final class InstallerController
                     'type' => 'official',
                     'source' => 'https://github.com/atoll-cms/atoll-theme-editorial/archive/refs/heads/main.zip',
                     'description' => 'Official external theme for docs/blog style sites',
+                    'preview' => 'https://raw.githubusercontent.com/atoll-cms/atoll-theme-editorial/main/assets/preview.png',
                 ],
                 [
                     'id' => 'portfolio',
@@ -218,6 +220,7 @@ final class InstallerController
                     'type' => 'official',
                     'source' => 'https://github.com/atoll-cms/atoll-theme-portfolio/archive/refs/heads/main.zip',
                     'description' => 'Official external theme for visual showcase sites',
+                    'preview' => 'https://raw.githubusercontent.com/atoll-cms/atoll-theme-portfolio/main/assets/preview.png',
                 ],
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
         }

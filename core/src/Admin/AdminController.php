@@ -15,6 +15,7 @@ use Atoll\Plugins\PluginManager;
 use Atoll\Security\SecurityManager;
 use Atoll\Support\Config;
 use Atoll\Support\PackageInstaller;
+use Atoll\Support\Yaml;
 use RuntimeException;
 
 final class AdminController
@@ -131,6 +132,7 @@ final class AdminController
             $endpoint === '/themes' && $request->method === 'GET' => $this->themes(),
             $endpoint === '/themes/install' && $request->method === 'POST' => $this->installTheme($request),
             $endpoint === '/themes/activate' && $request->method === 'POST' => $this->activateTheme($request),
+            $endpoint === '/themes/uninstall' && $request->method === 'POST' => $this->uninstallTheme($request),
             $endpoint === '/media/upload' && $request->method === 'POST' => $this->uploadMedia($request),
             $endpoint === '/security/audit' && $request->method === 'GET' => $this->securityAudit($request),
             $endpoint === '/security/2fa/setup' && $request->method === 'POST' => $this->setupTwoFactor($request),
@@ -342,6 +344,8 @@ final class AdminController
             return Response::json(['error' => 'settings must be object'], 422);
         }
 
+        $previousTheme = (string) Config::get($this->config, 'appearance.theme', 'default');
+
         foreach (['name', 'base_url', 'updater', 'appearance', 'smtp', 'security'] as $key) {
             if (array_key_exists($key, $settings)) {
                 $this->config[$key] = $settings[$key];
@@ -349,6 +353,10 @@ final class AdminController
         }
 
         Config::save($this->configPath, $this->config);
+        $currentTheme = (string) Config::get($this->config, 'appearance.theme', 'default');
+        if ($currentTheme !== $previousTheme) {
+            $this->cache->clear();
+        }
 
         return Response::json(['ok' => true]);
     }
@@ -456,6 +464,7 @@ final class AdminController
         $appearance['theme'] = $id;
         $this->config['appearance'] = $appearance;
         Config::save($this->configPath, $this->config);
+        $this->cache->clear();
 
         $this->security->recordAudit('theme.activate', [
             'user' => $this->security->currentUser(),
@@ -465,8 +474,52 @@ final class AdminController
         return Response::json(['ok' => true, 'active' => $id]);
     }
 
+    private function uninstallTheme(Request $request): Response
+    {
+        $payload = $request->isJson() ? $request->json() : $request->post;
+        $id = trim((string) ($payload['id'] ?? ''));
+        if ($id === '') {
+            return Response::json(['error' => 'Missing theme id'], 422);
+        }
+
+        $themes = $this->availableThemes();
+        if (!isset($themes[$id])) {
+            return Response::json(['error' => 'Theme not found: ' . $id], 404);
+        }
+
+        $activeTheme = (string) Config::get($this->config, 'appearance.theme', 'default');
+        if ($activeTheme === $id) {
+            return Response::json(['error' => 'Active theme cannot be uninstalled'], 422);
+        }
+
+        $source = (string) ($themes[$id]['source'] ?? 'site');
+        if ($source !== 'site') {
+            return Response::json(['error' => 'Built-in core themes cannot be uninstalled'], 422);
+        }
+
+        $themePath = rtrim($this->root, '/') . '/themes/' . $id;
+        if (!is_dir($themePath) && !is_link($themePath)) {
+            return Response::json(['error' => 'Theme files missing: ' . $id], 404);
+        }
+
+        try {
+            $this->assertThemePathInsideSiteThemes($themePath);
+            $this->deleteFilesystemPath($themePath);
+        } catch (RuntimeException $e) {
+            return Response::json(['error' => $e->getMessage()], 422);
+        }
+
+        $this->cache->clear();
+        $this->security->recordAudit('theme.uninstall', [
+            'user' => $this->security->currentUser(),
+            'theme' => $id,
+        ]);
+
+        return Response::json(['ok' => true, 'removed' => $id]);
+    }
+
     /**
-     * @return array<string, array{id:string,source:string,active?:bool}>
+     * @return array<string, array{id:string,source:string,preview?:string,active?:bool}>
      */
     private function availableThemes(): array
     {
@@ -478,6 +531,7 @@ final class AdminController
             $rows[$id] = [
                 'id' => $id,
                 'source' => 'site',
+                'preview' => $this->resolveThemePreview($dir, $id, 'site'),
             ];
         }
 
@@ -488,6 +542,7 @@ final class AdminController
                 $rows[$id] = [
                     'id' => $id,
                     'source' => 'core',
+                    'preview' => $this->resolveThemePreview($dir, $id, 'core'),
                 ];
             }
         }
@@ -505,6 +560,87 @@ final class AdminController
         }
 
         return rtrim($corePath, '/') . '/themes';
+    }
+
+    private function resolveThemePreview(string $themeDir, string $themeId, string $source): ?string
+    {
+        $metaFile = rtrim($themeDir, '/') . '/theme.yaml';
+        if (is_file($metaFile)) {
+            $meta = Yaml::parse((string) file_get_contents($metaFile));
+            $configured = (string) ($meta['preview'] ?? $meta['screenshot'] ?? $meta['thumbnail'] ?? '');
+            $configured = ltrim(trim($configured), '/');
+            if ($configured !== '' && is_file($themeDir . '/' . $configured)) {
+                $prefix = $source === 'core' ? '/core/themes/' : '/themes/';
+                return $prefix . rawurlencode($themeId) . '/' . str_replace('\\', '/', $configured);
+            }
+        }
+
+        $candidates = [
+            'assets/preview.webp',
+            'assets/preview.png',
+            'assets/preview.jpg',
+            'assets/screenshot.webp',
+            'assets/screenshot.png',
+            'assets/screenshot.jpg',
+            'assets/thumbnail.webp',
+            'assets/thumbnail.png',
+            'assets/thumbnail.jpg',
+        ];
+
+        foreach ($candidates as $relative) {
+            if (is_file($themeDir . '/' . $relative)) {
+                $prefix = $source === 'core' ? '/core/themes/' : '/themes/';
+                return $prefix . rawurlencode($themeId) . '/' . $relative;
+            }
+        }
+
+        return null;
+    }
+
+    private function assertThemePathInsideSiteThemes(string $themePath): void
+    {
+        $themesRoot = realpath(rtrim($this->root, '/') . '/themes');
+        $parent = realpath(dirname($themePath));
+        if ($themesRoot === false || $parent === false || $parent !== $themesRoot) {
+            throw new RuntimeException('Invalid theme path.');
+        }
+    }
+
+    private function deleteFilesystemPath(string $path): void
+    {
+        if (is_link($path) || is_file($path)) {
+            if (!@unlink($path)) {
+                throw new RuntimeException('Unable to remove file: ' . basename($path));
+            }
+            return;
+        }
+
+        if (!is_dir($path)) {
+            return;
+        }
+
+        $entries = scandir($path) ?: [];
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $child = $path . '/' . $entry;
+            if (is_link($child) || is_file($child)) {
+                if (!@unlink($child)) {
+                    throw new RuntimeException('Unable to remove file: ' . $entry);
+                }
+                continue;
+            }
+
+            if (is_dir($child)) {
+                $this->deleteFilesystemPath($child);
+            }
+        }
+
+        if (!@rmdir($path)) {
+            throw new RuntimeException('Unable to remove theme directory: ' . basename($path));
+        }
     }
 
     private function securityAudit(Request $request): Response

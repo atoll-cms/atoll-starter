@@ -1,0 +1,5 @@
+id: default
+name: Atoll Default (Starter Override)
+version: 0.1.0
+description: Starter-local override theme layer for atoll-cms.
+preview: assets/preview.png

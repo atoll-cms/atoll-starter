@@ -4,6 +4,7 @@
     "name": "Business Theme",
     "type": "official",
     "description": "Official external theme for corporate/service websites",
+    "preview": "https://raw.githubusercontent.com/atoll-cms/atoll-theme-business/main/assets/preview.png",
     "source": "https://github.com/atoll-cms/atoll-theme-business/archive/refs/heads/main.zip"
   },
   {
@@ -11,6 +12,7 @@
     "name": "Editorial Theme",
     "type": "official",
     "description": "Official external theme for docs/blog style sites",
+    "preview": "https://raw.githubusercontent.com/atoll-cms/atoll-theme-editorial/main/assets/preview.png",
     "source": "https://github.com/atoll-cms/atoll-theme-editorial/archive/refs/heads/main.zip"
   },
   {
@@ -18,6 +20,7 @@
     "name": "Portfolio Theme",
     "type": "official",
     "description": "Official external theme for visual showcase sites",
+    "preview": "https://raw.githubusercontent.com/atoll-cms/atoll-theme-portfolio/main/assets/preview.png",
     "source": "https://github.com/atoll-cms/atoll-theme-portfolio/archive/refs/heads/main.zip"
   }
 ]

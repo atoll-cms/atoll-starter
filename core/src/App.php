@@ -104,6 +104,7 @@ final class App
         $templateRoots = array_values(array_filter([
             $this->root . '/templates',
             $this->root . '/themes/' . $activeTheme . '/templates',
+            $this->coreRoot . '/themes/' . $activeTheme . '/templates',
             $this->coreRoot . '/themes/default/templates',
         ], static fn (string $path) => is_dir($path)));
 

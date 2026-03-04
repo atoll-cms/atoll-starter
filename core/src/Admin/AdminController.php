@@ -402,37 +402,15 @@ final class AdminController
     private function themes(): Response
     {
         $activeTheme = (string) Config::get($this->config, 'appearance.theme', 'default');
-        $rows = [];
-
-        $dirs = glob($this->root . '/themes/*', GLOB_ONLYDIR) ?: [];
-        foreach ($dirs as $dir) {
-            $id = basename($dir);
-            $rows[] = [
-                'id' => $id,
-                'active' => $id === $activeTheme,
-                'source' => 'site',
-            ];
+        $rows = $this->availableThemes();
+        foreach ($rows as &$row) {
+            $row['active'] = ($row['id'] ?? '') === $activeTheme;
         }
-
-        $hasDefault = false;
-        foreach ($rows as $row) {
-            if (($row['id'] ?? null) === 'default') {
-                $hasDefault = true;
-                break;
-            }
-        }
-
-        if (!$hasDefault) {
-            $rows[] = [
-                'id' => 'default',
-                'active' => $activeTheme === 'default',
-                'source' => 'core',
-            ];
-        }
+        unset($row);
 
         return Response::json([
             'ok' => true,
-            'themes' => $rows,
+            'themes' => array_values($rows),
             'active' => $activeTheme,
         ]);
     }
@@ -468,7 +446,8 @@ final class AdminController
             return Response::json(['error' => 'Missing theme id'], 422);
         }
 
-        if ($id !== 'default' && !is_dir($this->root . '/themes/' . $id)) {
+        $themes = $this->availableThemes();
+        if (!isset($themes[$id])) {
             return Response::json(['error' => 'Theme not found: ' . $id], 404);
         }
 
@@ -484,6 +463,48 @@ final class AdminController
         ]);
 
         return Response::json(['ok' => true, 'active' => $id]);
+    }
+
+    /**
+     * @return array<string, array{id:string,source:string,active?:bool}>
+     */
+    private function availableThemes(): array
+    {
+        $rows = [];
+
+        $siteDirs = glob($this->root . '/themes/*', GLOB_ONLYDIR) ?: [];
+        foreach ($siteDirs as $dir) {
+            $id = basename($dir);
+            $rows[$id] = [
+                'id' => $id,
+                'source' => 'site',
+            ];
+        }
+
+        $coreDirs = glob($this->coreThemesDir() . '/*', GLOB_ONLYDIR) ?: [];
+        foreach ($coreDirs as $dir) {
+            $id = basename($dir);
+            if (!isset($rows[$id])) {
+                $rows[$id] = [
+                    'id' => $id,
+                    'source' => 'core',
+                ];
+            }
+        }
+
+        ksort($rows);
+        return $rows;
+    }
+
+    private function coreThemesDir(): string
+    {
+        $configured = Config::get($this->config, 'core.path', 'core');
+        $corePath = is_string($configured) && $configured !== '' ? $configured : 'core';
+        if (!str_starts_with($corePath, '/')) {
+            $corePath = $this->root . '/' . ltrim($corePath, '/');
+        }
+
+        return rtrim($corePath, '/') . '/themes';
     }
 
     private function securityAudit(Request $request): Response

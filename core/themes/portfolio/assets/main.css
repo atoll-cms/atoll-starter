@@ -1,0 +1,147 @@
+:root {
+  --bg: #0b1017;
+  --text: #e6edf7;
+  --surface: #121a24;
+  --line: #2a3748;
+  --brand: #33d1a0;
+  --brand-strong: #1cae82;
+  --muted: #95a4b8;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 15% 8%, rgba(51, 209, 160, 0.18), transparent 32%),
+    radial-gradient(circle at 85% 14%, rgba(95, 129, 255, 0.17), transparent 36%),
+    var(--bg);
+  line-height: 1.65;
+}
+
+a { color: #8ce8cc; }
+
+.container { width: min(1120px, 92vw); margin: 0 auto; }
+.row { display: flex; align-items: center; gap: 1rem; }
+.between { justify-content: space-between; }
+
+.site-header,
+.site-footer {
+  background: rgba(10, 15, 23, 0.72);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+}
+
+.site-header { position: sticky; top: 0; z-index: 8; }
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+  margin-top: 4rem;
+}
+
+.site-header .row,
+.site-footer .row { justify-content: space-between; padding: 1rem 0; }
+
+.brand {
+  font-weight: 700;
+  text-decoration: none;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-size: .92rem;
+}
+
+.nav { list-style: none; display: flex; gap: .6rem; margin: 0; padding: 0; }
+
+.nav a,
+.admin-link {
+  text-decoration: none;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: .35rem .8rem;
+  color: #d7e3f2;
+  background: rgba(18, 28, 40, 0.92);
+}
+
+.nav a:hover,
+.admin-link:hover {
+  border-color: rgba(51, 209, 160, 0.5);
+}
+
+main.container { margin-top: 2rem; }
+
+h1,h2,h3 { line-height: 1.2; }
+h1 { font-size: clamp(2.2rem, 4.8vw, 3.6rem); }
+
+.prose {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1.2rem;
+}
+
+.grid-2 {
+  margin: 1.5rem 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.card,
+.post-card,
+.atoll-island {
+  background: linear-gradient(180deg, #15202d, #121a24);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1rem;
+}
+
+.meta { color: var(--muted); font-size: .92rem; }
+
+.atoll-island {
+  margin: 1rem 0;
+  border-style: dashed;
+  border-color: #34506d;
+}
+
+.island-input,
+.contact-form input,
+.contact-form textarea,
+.contact-form button {
+  width: 100%;
+  margin: .35rem 0 .9rem;
+  padding: .72rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  background: #0f1823;
+  color: var(--text);
+}
+
+.contact-form button {
+  background: var(--brand);
+  color: #002015;
+  border: 0;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.contact-form button:hover { background: var(--brand-strong); color: #fff; }
+
+.honeypot { position: absolute; left: -9999px; opacity: 0; pointer-events: none; }
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: .8rem;
+}
+
+.gallery img { width: 100%; border-radius: 12px; border: 1px solid var(--line); }
+
+@media (max-width: 768px) {
+  .site-header .row { flex-wrap: wrap; }
+  .grid-2 { grid-template-columns: 1fr; }
+}

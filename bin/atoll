@@ -39,7 +39,8 @@ $printHelp = static function (): void {
     echo "                                                   Install plugin from folder/zip/url\n";
     echo "  atoll plugin:install:registry <id> [--enable] [--force]\n";
     echo "                                                   Install plugin via plugin-registry.json\n";
-    echo "  atoll theme:list                                 List installed themes\n";
+    echo "  atoll theme:list                                 List available themes (site + built-in core)\n";
+    echo "  atoll theme:activate <id>                        Activate a theme\n";
     echo "  atoll theme:install <source> [--force]           Install theme from folder/zip/url\n";
     echo "  atoll theme:install:registry <id> [--force]      Install theme via theme-registry.json\n";
     echo "  atoll islands:build                              Build hint for island bundles\n";
@@ -326,16 +327,44 @@ switch ($command) {
 
     case 'theme:list':
         $activeTheme = (string) Config::get($config, 'appearance.theme', 'default');
-        $dirs = glob($root . '/themes/*', GLOB_ONLYDIR) ?: [];
-        if ($dirs === []) {
-            echo "No site themes installed.\n";
-        }
-        foreach ($dirs as $dir) {
-            $id = basename($dir);
+        $themes = listAvailableThemes($root, $corePath);
+        foreach ($themes as $theme) {
+            $id = (string) ($theme['id'] ?? '');
+            $source = (string) ($theme['source'] ?? 'unknown');
             $marker = $id === $activeTheme ? '*' : ' ';
-            echo sprintf("%s %s\n", $marker, $id);
+            echo sprintf("%s %s (%s)\n", $marker, $id, $source);
         }
-        echo "Core fallback theme: default ({$corePath}/themes/default)\n";
+        if ($themes === []) {
+            echo "No themes found.\n";
+        }
+        exit(0);
+
+    case 'theme:activate':
+        $id = $args[1] ?? null;
+        if ($id === null || trim($id) === '') {
+            fail('Usage: atoll theme:activate <id>');
+        }
+
+        $id = trim($id);
+        $themes = listAvailableThemes($root, $corePath);
+        $index = [];
+        foreach ($themes as $theme) {
+            $themeId = (string) ($theme['id'] ?? '');
+            if ($themeId !== '') {
+                $index[$themeId] = true;
+            }
+        }
+
+        if (!isset($index[$id])) {
+            fail("Theme not found: {$id}");
+        }
+
+        $appearance = Config::get($config, 'appearance', []);
+        $appearance = is_array($appearance) ? $appearance : [];
+        $appearance['theme'] = $id;
+        $config['appearance'] = $appearance;
+        Config::save($configPath, $config);
+        echo "Theme activated: {$id}\n";
         exit(0);
 
     case 'theme:install':
@@ -400,6 +429,37 @@ function resolveCorePath(string $root, array $config): string
     }
 
     return rtrim($root . '/' . ltrim($configured, '/'), '/');
+}
+
+/**
+ * @return array<int, array{id:string,source:string}>
+ */
+function listAvailableThemes(string $root, string $corePath): array
+{
+    $rows = [];
+
+    $siteDirs = glob($root . '/themes/*', GLOB_ONLYDIR) ?: [];
+    foreach ($siteDirs as $dir) {
+        $id = basename($dir);
+        $rows[$id] = [
+            'id' => $id,
+            'source' => 'site',
+        ];
+    }
+
+    $coreDirs = glob(rtrim($corePath, '/') . '/themes/*', GLOB_ONLYDIR) ?: [];
+    foreach ($coreDirs as $dir) {
+        $id = basename($dir);
+        if (!isset($rows[$id])) {
+            $rows[$id] = [
+                'id' => $id,
+                'source' => 'core',
+            ];
+        }
+    }
+
+    ksort($rows);
+    return array_values($rows);
 }
 
 function readCoreVersion(string $corePath): string

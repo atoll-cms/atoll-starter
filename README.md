@@ -14,7 +14,7 @@ Projekt-/kundenspezifische Inhalte bleiben ausserhalb davon.
 `core/` (updatable):
 - Runtime (`core/src`)
 - Admin SPA (`core/admin`)
-- Default Theme (`core/themes/default`)
+- Built-in Theme Set (`core/themes/default`, `core/themes/business`, `core/themes/editorial`, `core/themes/portfolio`)
 - Island-Bundles (`core/islands`)
 
 Site-Ebene (stabil bei Core-Updates):
@@ -30,11 +30,13 @@ Site-Ebene (stabil bei Core-Updates):
 Template-Auflösung:
 1. `templates/` (site-level hard override)
 2. `themes/<active-theme>/templates/`
-3. `core/themes/default/templates/` (Fallback)
+3. `core/themes/<active-theme>/templates/`
+4. `core/themes/default/templates/` (Fallback)
 
 Theme-Asset-Auflösung (`theme_asset()`):
 1. `themes/<active-theme>/assets/...`
-2. `core/themes/default/assets/...`
+2. `core/themes/<active-theme>/assets/...`
+3. `core/themes/default/assets/...`
 
 ## Quickstart
 
@@ -159,7 +161,11 @@ Theme installieren:
 ```bash
 php bin/atoll theme:install /pfad/zum/theme
 php bin/atoll theme:install:registry core-default
+php bin/atoll theme:install:registry core-business
+php bin/atoll theme:install:registry core-editorial
+php bin/atoll theme:install:registry core-portfolio
 php bin/atoll theme:list
+php bin/atoll theme:activate business
 ```
 
 ## Eigene Plugins
@@ -188,6 +194,10 @@ Aktivierung über:
 - oder `content/data/plugins.yaml`
 
 ## Eigene Themes
+
+Ein Theme besteht in atoll aus:
+- `assets/main.css` (Look & Feel)
+- optionalen `templates/`-Overrides (Layouts/Pages/Components)
 
 Theme-Struktur:
 
@@ -223,6 +233,7 @@ php bin/atoll plugin:list
 php bin/atoll plugin:install /path/to/plugin --enable
 php bin/atoll plugin:install:registry i18n --enable
 php bin/atoll theme:list
+php bin/atoll theme:activate business
 php bin/atoll theme:install /path/to/theme
 php bin/atoll theme:install:registry core-default
 ```

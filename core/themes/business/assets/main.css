@@ -1,0 +1,128 @@
+:root {
+  --bg: #f5f8fc;
+  --text: #122030;
+  --surface: #ffffff;
+  --line: #d7e1ee;
+  --brand: #0d6efd;
+  --brand-strong: #0a58ca;
+  --muted: #5e6e82;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--text);
+  background: linear-gradient(180deg, #eef4fb 0, var(--bg) 30%);
+  line-height: 1.65;
+}
+
+a { color: var(--brand-strong); }
+
+.container { width: min(1120px, 92vw); margin: 0 auto; }
+.row { display: flex; align-items: center; gap: 1rem; }
+.between { justify-content: space-between; }
+
+.site-header,
+.site-footer {
+  background: rgba(255, 255, 255, 0.9);
+  border-bottom: 1px solid var(--line);
+}
+
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  backdrop-filter: blur(6px);
+}
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+  margin-top: 4rem;
+}
+
+.site-header .row,
+.site-footer .row { justify-content: space-between; padding: 1rem 0; }
+
+.brand { font-weight: 700; text-decoration: none; letter-spacing: 0.02em; }
+
+.nav { list-style: none; display: flex; gap: .6rem; margin: 0; padding: 0; }
+.nav a,
+.admin-link {
+  text-decoration: none;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  color: #1f2f45;
+  background: #fff;
+}
+
+.nav a:hover,
+.admin-link:hover { border-color: #9fb7d7; }
+
+main.container { margin-top: 2rem; }
+
+.prose,
+.card,
+.post-card,
+.atoll-island {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(11, 38, 74, 0.05);
+}
+
+.prose { padding: 1.2rem; }
+
+.grid-2 {
+  margin: 1.5rem 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.card,
+.post-card { padding: 1rem; }
+
+.meta { color: var(--muted); font-size: .92rem; }
+
+.atoll-island { margin: 1rem 0; padding: 1rem; }
+
+.island-input,
+.contact-form input,
+.contact-form textarea,
+.contact-form button {
+  width: 100%;
+  margin: .35rem 0 .9rem;
+  padding: .72rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+}
+
+.contact-form button {
+  background: var(--brand);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+}
+
+.contact-form button:hover { background: var(--brand-strong); }
+
+.honeypot { position: absolute; left: -9999px; opacity: 0; pointer-events: none; }
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: .8rem;
+}
+
+.gallery img { width: 100%; border-radius: 10px; border: 1px solid var(--line); }
+
+@media (max-width: 768px) {
+  .site-header .row { flex-wrap: wrap; }
+  .grid-2 { grid-template-columns: 1fr; }
+}

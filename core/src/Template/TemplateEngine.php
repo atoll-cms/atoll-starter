@@ -94,9 +94,9 @@ final class TemplateEngine
             return $this->resolveUrl('/themes/' . rawurlencode($this->activeTheme) . '/assets/' . $relative);
         }
 
-        $coreThemePath = $this->coreRoot . '/themes/default/assets/' . $relative;
+        $coreThemePath = $this->coreRoot . '/themes/' . $this->activeTheme . '/assets/' . $relative;
         if (is_file($coreThemePath)) {
-            return $this->resolveUrl('/core/themes/default/assets/' . $relative);
+            return $this->resolveUrl('/core/themes/' . rawurlencode($this->activeTheme) . '/assets/' . $relative);
         }
 
         return $this->resolveUrl('/core/themes/default/assets/' . $relative);

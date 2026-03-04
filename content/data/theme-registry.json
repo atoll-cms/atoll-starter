@@ -5,5 +5,26 @@
     "type": "core",
     "description": "Built-in default theme from atoll core",
     "source": "core/themes/default"
+  },
+  {
+    "id": "core-business",
+    "name": "Business Theme",
+    "type": "core",
+    "description": "Corporate/service websites with clear CTAs",
+    "source": "core/themes/business"
+  },
+  {
+    "id": "core-editorial",
+    "name": "Editorial Theme",
+    "type": "core",
+    "description": "Content-heavy docs and blog style",
+    "source": "core/themes/editorial"
+  },
+  {
+    "id": "core-portfolio",
+    "name": "Portfolio Theme",
+    "type": "core",
+    "description": "Creative showcase with bold visual style",
+    "source": "core/themes/portfolio"
   }
 ]

@@ -205,6 +205,27 @@ final class InstallerController
                     'source' => 'core/themes/default',
                     'description' => 'Built-in Atoll default theme',
                 ],
+                [
+                    'id' => 'core-business',
+                    'name' => 'Business Theme',
+                    'type' => 'core',
+                    'source' => 'core/themes/business',
+                    'description' => 'Corporate/service websites with clear CTAs',
+                ],
+                [
+                    'id' => 'core-editorial',
+                    'name' => 'Editorial Theme',
+                    'type' => 'core',
+                    'source' => 'core/themes/editorial',
+                    'description' => 'Content-heavy docs and blog style',
+                ],
+                [
+                    'id' => 'core-portfolio',
+                    'name' => 'Portfolio Theme',
+                    'type' => 'core',
+                    'source' => 'core/themes/portfolio',
+                    'description' => 'Creative showcase with bold visual style',
+                ],
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
         }
     }

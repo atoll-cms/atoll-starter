@@ -25,6 +25,8 @@
     "serve": "@php bin/atoll serve",
     "dev": "@php bin/atoll dev",
     "dev-local": "@php bin/atoll dev:local",
-    "cache:clear": "@php bin/atoll cache:clear"
+    "cache:clear": "@php bin/atoll cache:clear",
+    "benchmark:run": "@php bin/atoll benchmark:run",
+    "benchmark:report": "@php bin/atoll benchmark:report"
   }
 }

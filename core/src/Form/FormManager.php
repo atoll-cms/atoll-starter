@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Atoll\Form;
 
+use Atoll\Hooks\HookManager;
 use Atoll\Http\Request;
 use Atoll\Mail\Mailer;
 use Atoll\Security\SecurityManager;
@@ -15,7 +16,8 @@ final class FormManager
         private readonly string $formsDir,
         private readonly string $submissionsDir,
         private readonly Mailer $mailer,
-        private readonly SecurityManager $security
+        private readonly SecurityManager $security,
+        private readonly HookManager $hooks
     ) {
         if (!is_dir($this->submissionsDir)) {
             mkdir($this->submissionsDir, 0775, true);
@@ -81,6 +83,12 @@ final class FormManager
         $subject = (string) ($config['mail']['subject'] ?? 'New form submission: ' . $name);
         $body = (string) ($config['mail']['template'] ?? json_encode($record['payload'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         $this->mailer->send($recipient, $subject, $body, array_map('strval', $record['payload']));
+
+        $this->hooks->run('form:submitted', [
+            'form' => $name,
+            'record' => $record,
+            'config' => $config,
+        ]);
 
         return ['ok' => true, 'message' => (string) ($config['success_message'] ?? 'Thank you.')];
     }

@@ -108,6 +108,53 @@ button.primary {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.grid-3 {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.stat {
+  text-align: center;
+}
+
+.inline-form {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+}
+
+.inline-form .checkbox {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  margin: 0;
+}
+
+.inline-form .checkbox input {
+  width: auto;
+  margin: 0;
+}
+
+.audit-list {
+  margin-top: 0.8rem;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.audit-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.55rem;
+  margin-bottom: 0.55rem;
+  background: #0f2226;
+}
+
+.entry-active {
+  background: rgba(245, 158, 11, 0.1);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -135,6 +182,12 @@ th {
 
 @media (max-width: 900px) {
   .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .grid-3,
+  .grid-2,
+  .inline-form {
     grid-template-columns: 1fr;
   }
 }

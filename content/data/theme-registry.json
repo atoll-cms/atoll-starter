@@ -1,0 +1,9 @@
+[
+  {
+    "id": "core-default",
+    "name": "Default Theme",
+    "type": "core",
+    "description": "Built-in default theme from atoll core",
+    "source": "core/themes/default"
+  }
+]

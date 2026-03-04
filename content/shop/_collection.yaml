@@ -1,0 +1,24 @@
+name: Shop
+slug_from: filename
+sort: title asc
+per_page: 24
+
+schema:
+  title:
+    type: string
+    required: true
+  price:
+    type: string
+    required: true
+  currency:
+    type: string
+    default: EUR
+  excerpt:
+    type: text
+    max_length: 300
+  stock:
+    type: string
+  draft:
+    type: boolean
+    default: false
+

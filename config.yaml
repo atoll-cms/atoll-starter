@@ -6,7 +6,7 @@ core:
   path: core
 updater:
   channel: stable
-  manifest_url: https://raw.githubusercontent.com/atoll-cms/atoll-updates/main/channels/stable.json
+  manifest_url: 'https://raw.githubusercontent.com/atoll-cms/atoll-updates/main/channels/stable.json'
   public_key: config/updater-public.pem
   require_signature: true
   timeout_seconds: 15
@@ -20,6 +20,18 @@ security:
   rate_limit:
     requests: 120
     window_seconds: 60
+  admin_ip_allowlist: {  }
+  session:
+    ttl_minutes: 480
+    secure_cookie: false
+    same_site: Lax
+    name: ATOLLSESSID
+  password:
+    min_length: 12
+    require_uppercase: true
+    require_lowercase: true
+    require_digit: true
+    require_special: true
 smtp:
   driver: mail
   host: localhost
@@ -48,3 +60,17 @@ appearance:
   theme: default
 plugins:
   defaults_enabled: true
+analytics:
+  enabled: false
+  provider: plausible
+  domain: ''
+  src: 'https://plausible.io/js/script.js'
+  require_consent: true
+i18n:
+  locales:
+    - de
+    - en
+  default_locale: de
+  prefix_default_locale: false
+forms_pro:
+  webhooks: {  }

@@ -136,6 +136,8 @@ final class ContentRepository
     {
         $collection = trim($collection, '/');
         $id = trim($id, '/');
+        $frontmatter = $this->applySchemaDefaults($collection, $frontmatter);
+        $this->validateSchema($collection, $frontmatter);
 
         $dir = $this->contentRoot . '/' . $collection;
         if (!is_dir($dir)) {
@@ -254,5 +256,105 @@ final class ContentRepository
 
         // 2025-01-hello-world -> hello-world
         return (string) preg_replace('/^\d{4}-\d{2}-/', '', $filename);
+    }
+
+    /**
+     * @param array<string, mixed> $frontmatter
+     * @return array<string, mixed>
+     */
+    private function applySchemaDefaults(string $collection, array $frontmatter): array
+    {
+        $schema = $this->collectionMeta($collection)['schema'] ?? null;
+        if (!is_array($schema)) {
+            return $frontmatter;
+        }
+
+        foreach ($schema as $field => $rules) {
+            if (!is_string($field) || !is_array($rules)) {
+                continue;
+            }
+            if (!array_key_exists($field, $frontmatter) && array_key_exists('default', $rules)) {
+                $frontmatter[$field] = $rules['default'];
+            }
+        }
+
+        return $frontmatter;
+    }
+
+    /**
+     * @param array<string, mixed> $frontmatter
+     */
+    private function validateSchema(string $collection, array $frontmatter): void
+    {
+        $schema = $this->collectionMeta($collection)['schema'] ?? null;
+        if (!is_array($schema) || $schema === []) {
+            return;
+        }
+
+        $errors = [];
+
+        foreach ($schema as $field => $rules) {
+            if (!is_string($field) || !is_array($rules)) {
+                continue;
+            }
+
+            $required = (bool) ($rules['required'] ?? false);
+            $exists = array_key_exists($field, $frontmatter);
+            $value = $frontmatter[$field] ?? null;
+
+            if ($required && (!$exists || $value === null || $value === '')) {
+                $errors[$field] = 'required';
+                continue;
+            }
+
+            if (!$exists || $value === null || $value === '') {
+                continue;
+            }
+
+            $type = (string) ($rules['type'] ?? 'string');
+            if (!$this->valueMatchesType($type, $value, $rules)) {
+                $errors[$field] = 'invalid_type:' . $type;
+                continue;
+            }
+
+            $maxLength = isset($rules['max_length']) ? (int) $rules['max_length'] : 0;
+            if ($maxLength > 0 && is_string($value) && mb_strlen($value) > $maxLength) {
+                $errors[$field] = 'max_length_exceeded:' . $maxLength;
+            }
+        }
+
+        if ($errors !== []) {
+            throw new ValidationException($errors);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $rules
+     */
+    private function valueMatchesType(string $type, mixed $value, array $rules): bool
+    {
+        return match ($type) {
+            'string', 'text' => is_string($value),
+            'date' => is_string($value) && strtotime($value) !== false,
+            'boolean' => is_bool($value),
+            'image' => is_string($value) && str_starts_with($value, '/'),
+            'list' => $this->matchesListType($value, (string) ($rules['of'] ?? 'string')),
+            default => true,
+        };
+    }
+
+    private function matchesListType(mixed $value, string $of): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if ($of === 'string' && !is_string($item)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

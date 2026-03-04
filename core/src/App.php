@@ -12,6 +12,7 @@ use Atoll\Form\FormManager;
 use Atoll\Hooks\HookManager;
 use Atoll\Http\Request;
 use Atoll\Http\Response;
+use Atoll\Installer\InstallerController;
 use Atoll\Islands\IslandManager;
 use Atoll\Mail\Mailer;
 use Atoll\Media\MediaManager;
@@ -47,6 +48,20 @@ final class App
     public function handle(): Response
     {
         $request = Request::fromGlobals();
+        $security = new SecurityManager($this->root . '/cache/rate-limit', $this->config);
+        $installer = new InstallerController($this->root, $this->root . '/config.yaml');
+
+        if (!$this->isConfigured()) {
+            if (str_starts_with($request->path, '/install')) {
+                return $security->applyHeaders($installer->handle($request, false));
+            }
+
+            return $security->applyHeaders(Response::redirect('/install', 302));
+        }
+
+        if (str_starts_with($request->path, '/install')) {
+            return $security->applyHeaders($installer->handle($request, true));
+        }
 
         $hooks = new HookManager();
         $pluginManager = new PluginManager(
@@ -64,7 +79,6 @@ final class App
             ttl: (int) Config::get($this->config, 'cache.ttl', 3600)
         );
 
-        $security = new SecurityManager($this->root . '/cache/rate-limit', $this->config);
         $forceHttps = $security->forceHttps($request);
         if ($forceHttps !== null) {
             return $security->applyHeaders($forceHttps);
@@ -78,7 +92,7 @@ final class App
         $content = new ContentRepository($this->root . '/content', $hooks);
         $redirects = new RedirectManager($this->root . '/content/data/redirects.yaml');
         $mailer = new Mailer($this->config);
-        $forms = new FormManager($this->root . '/content/forms', $this->root . '/content/forms-submissions', $mailer, $security);
+        $forms = new FormManager($this->root . '/content/forms', $this->root . '/content/forms-submissions', $mailer, $security, $hooks);
         $seo = new SeoManager($this->config);
 
         $activeTheme = (string) Config::get($this->config, 'appearance.theme', 'default');
@@ -126,6 +140,18 @@ final class App
             backup: $backup,
             media: $media
         );
+
+        if (str_starts_with($request->path, '/admin') && !$security->isAdminIpAllowed($request)) {
+            $security->recordAudit('admin.access_denied_ip', [
+                'ip' => $request->server['REMOTE_ADDR'] ?? 'unknown',
+            ]);
+
+            if (str_starts_with($request->path, '/admin/api')) {
+                return $security->applyHeaders(Response::json(['error' => 'Admin access from this IP is not allowed'], 403));
+            }
+
+            return $security->applyHeaders(Response::html('<h1>403 Forbidden</h1><p>Admin access from this IP is not allowed.</p>', 403));
+        }
 
         if (str_starts_with($request->path, '/admin/api')) {
             return $security->applyHeaders($admin->handleApi($request));
@@ -249,5 +275,28 @@ final class App
         }
 
         return rtrim($this->root . '/' . ltrim($path, '/'), '/');
+    }
+
+    private function isConfigured(): bool
+    {
+        if (!is_file($this->root . '/config.yaml')) {
+            return false;
+        }
+
+        $users = Config::get($this->config, 'users', []);
+        if (!is_array($users) || $users === []) {
+            return false;
+        }
+
+        foreach ($users as $user) {
+            if (!is_array($user)) {
+                continue;
+            }
+            if (is_string($user['username'] ?? null) && is_string($user['password_hash'] ?? null) && $user['password_hash'] !== '') {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

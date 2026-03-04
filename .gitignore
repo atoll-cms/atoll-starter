@@ -2,7 +2,11 @@
 /cache/*.html
 /cache/*.json
 /cache/rate-limit/
+/cache/downloads/
+/cache/forms-pro-webhooks.log
 /backups/*.zip
 /releases/
+/content/forms-submissions/*.jsonl
+/content/data/security-audit.jsonl
 /config/updater-public.pem
 /.DS_Store

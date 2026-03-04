@@ -8,14 +8,25 @@ if (!class_exists(ZipArchive::class)) {
     exit(1);
 }
 
-$root = dirname(__DIR__, 2);
-$corePath = $root . '/core';
+$corePath = dirname(__DIR__);
+$projectRoot = $corePath;
+
+if (!is_file($corePath . '/VERSION')) {
+    $projectRoot = dirname(__DIR__, 2);
+    $corePath = $projectRoot . '/core';
+}
+
+if (!is_file($corePath . '/VERSION')) {
+    fwrite(STDERR, "Could not locate core VERSION file.\n");
+    exit(1);
+}
+
 $versionFile = $corePath . '/VERSION';
 $version = is_file($versionFile) ? trim((string) file_get_contents($versionFile)) : '0.0.0';
 
-$outDir = $argv[1] ?? ($root . '/releases');
+$outDir = $argv[1] ?? ($projectRoot . '/releases');
 if (!str_starts_with($outDir, '/')) {
-    $outDir = $root . '/' . ltrim($outDir, '/');
+    $outDir = $projectRoot . '/' . ltrim($outDir, '/');
 }
 
 if (!is_dir($outDir)) {
@@ -40,7 +51,12 @@ foreach ($iterator as $item) {
         continue;
     }
 
-    $relative = 'core/' . substr($real, strlen($corePath) + 1);
+    $relativeCore = substr($real, strlen($corePath) + 1);
+    if ($relativeCore === '' || str_starts_with($relativeCore, '.git') || str_starts_with($relativeCore, 'releases/')) {
+        continue;
+    }
+
+    $relative = 'core/' . $relativeCore;
     if ($item->isDir()) {
         $zip->addEmptyDir($relative);
     } else {

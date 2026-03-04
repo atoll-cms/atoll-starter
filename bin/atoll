@@ -8,6 +8,7 @@ require dirname(__DIR__) . '/core/src/bootstrap.php';
 use Atoll\Cache\CacheManager;
 use Atoll\Hooks\HookManager;
 use Atoll\Support\Config;
+use Atoll\Support\PackageInstaller;
 use Atoll\Support\Yaml;
 
 $args = $argv;
@@ -35,9 +36,12 @@ $printHelp = static function (): void {
     echo "  atoll core:migrate [--from=<v>] [--to=<v>]       Run semantic core migrations\n";
     echo "  atoll plugin:list                                List installed plugins\n";
     echo "  atoll plugin:install <source> [--enable] [--force]\n";
-    echo "                                                   Install plugin from folder/zip\n";
+    echo "                                                   Install plugin from folder/zip/url\n";
+    echo "  atoll plugin:install:registry <id> [--enable] [--force]\n";
+    echo "                                                   Install plugin via plugin-registry.json\n";
     echo "  atoll theme:list                                 List installed themes\n";
-    echo "  atoll theme:install <source> [--force]           Install theme from folder/zip\n";
+    echo "  atoll theme:install <source> [--force]           Install theme from folder/zip/url\n";
+    echo "  atoll theme:install:registry <id> [--force]      Install theme via theme-registry.json\n";
     echo "  atoll islands:build                              Build hint for island bundles\n";
 };
 
@@ -255,6 +259,7 @@ switch ($command) {
         $stateFile = $root . '/content/data/plugins.yaml';
         $state = is_file($stateFile) ? Yaml::parse((string) file_get_contents($stateFile)) : [];
         $state = is_array($state) ? $state : [];
+        $defaultsEnabled = (bool) Config::get($config, 'plugins.defaults_enabled', true);
 
         $dirs = glob($root . '/plugins/*', GLOB_ONLYDIR) ?: [];
         if ($dirs === []) {
@@ -272,7 +277,7 @@ switch ($command) {
                     $name = $manifest['name'];
                 }
             }
-            $active = (bool) ($state[$id] ?? false);
+            $active = (bool) ($state[$id] ?? $defaultsEnabled);
             echo sprintf("- %s (%s) [%s]\n", $id, $name, $active ? 'active' : 'inactive');
         }
         exit(0);
@@ -286,34 +291,36 @@ switch ($command) {
         $force = in_array('--force', $args, true);
         $enable = in_array('--enable', $args, true);
 
-        $sourceDir = resolveInstallSource($source, $root . '/cache', 'plugin');
-        if (!is_file($sourceDir . '/plugin.php')) {
-            fail('Invalid plugin package: plugin.php missing at root.');
+        try {
+            $result = PackageInstaller::installPlugin($root, $source, $force, $enable, $config);
+        } catch (RuntimeException $e) {
+            fail($e->getMessage());
         }
 
-        $id = normalizePackageId(basename($sourceDir));
-        $dest = $root . '/plugins/' . $id;
+        echo "Plugin installed: " . $result['id'] . "\n";
+        if (($result['enabled'] ?? false) === true) {
+            echo "Plugin enabled: " . $result['id'] . "\n";
+        }
+        exit(0);
 
-        if (is_dir($dest)) {
-            if (!$force) {
-                fail("Plugin already exists: {$id} (use --force to overwrite)");
-            }
-            rrmdir($dest);
+    case 'plugin:install:registry':
+        $id = $args[1] ?? null;
+        if ($id === null) {
+            fail('Usage: atoll plugin:install:registry <id> [--enable] [--force]');
         }
 
-        copyDirectory($sourceDir, $dest);
-        echo "Plugin installed: {$id}\n";
+        $force = in_array('--force', $args, true);
+        $enable = in_array('--enable', $args, true);
 
-        if ($enable) {
-            $stateFile = $root . '/content/data/plugins.yaml';
-            $state = is_file($stateFile) ? Yaml::parse((string) file_get_contents($stateFile)) : [];
-            $state = is_array($state) ? $state : [];
-            $state[$id] = true;
-            if (!is_dir(dirname($stateFile))) {
-                mkdir(dirname($stateFile), 0775, true);
-            }
-            file_put_contents($stateFile, Yaml::dump($state));
-            echo "Plugin enabled: {$id}\n";
+        try {
+            $result = PackageInstaller::installPluginFromRegistry($root, $id, $force, $enable, $config);
+        } catch (RuntimeException $e) {
+            fail($e->getMessage());
+        }
+
+        echo "Plugin installed from registry: " . $result['id'] . "\n";
+        if (($result['enabled'] ?? false) === true) {
+            echo "Plugin enabled: " . $result['id'] . "\n";
         }
         exit(0);
 
@@ -338,24 +345,29 @@ switch ($command) {
         }
 
         $force = in_array('--force', $args, true);
-        $sourceDir = resolveInstallSource($source, $root . '/cache', 'theme');
-
-        if (!is_dir($sourceDir . '/templates')) {
-            fail('Invalid theme package: templates/ missing at root.');
+        try {
+            $result = PackageInstaller::installTheme($root, $source, $force, $config);
+        } catch (RuntimeException $e) {
+            fail($e->getMessage());
         }
 
-        $id = normalizePackageId(basename($sourceDir));
-        $dest = $root . '/themes/' . $id;
+        echo "Theme installed: " . $result['id'] . "\n";
+        exit(0);
 
-        if (is_dir($dest)) {
-            if (!$force) {
-                fail("Theme already exists: {$id} (use --force to overwrite)");
-            }
-            rrmdir($dest);
+    case 'theme:install:registry':
+        $id = $args[1] ?? null;
+        if ($id === null) {
+            fail('Usage: atoll theme:install:registry <id> [--force]');
         }
 
-        copyDirectory($sourceDir, $dest);
-        echo "Theme installed: {$id}\n";
+        $force = in_array('--force', $args, true);
+        try {
+            $result = PackageInstaller::installThemeFromRegistry($root, $id, $force, $config);
+        } catch (RuntimeException $e) {
+            fail($e->getMessage());
+        }
+
+        echo "Theme installed from registry: " . $result['id'] . "\n";
         exit(0);
 
     case 'islands:build':

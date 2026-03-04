@@ -3,24 +3,28 @@
     "id": "i18n",
     "name": "i18n",
     "type": "official",
-    "description": "Multi language routing and hreflang support"
+    "description": "Multi language routing and hreflang support",
+    "source": "plugins/i18n"
   },
   {
     "id": "analytics",
     "name": "analytics",
     "type": "official",
-    "description": "Consent-aware analytics integration"
+    "description": "Consent-aware analytics integration",
+    "source": "plugins/analytics"
   },
   {
     "id": "forms-pro",
     "name": "forms-pro",
     "type": "official",
-    "description": "Advanced forms features"
+    "description": "Advanced forms features",
+    "source": "plugins/forms-pro"
   },
   {
     "id": "shop",
     "name": "shop",
     "type": "official",
-    "description": "Lightweight ecommerce module"
+    "description": "Lightweight ecommerce module",
+    "source": "plugins/shop"
   }
 ]

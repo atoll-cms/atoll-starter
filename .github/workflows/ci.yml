@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, json, gd, openssl, zip
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: PHP lint
+        run: |
+          while IFS= read -r file; do
+            php -l "$file"
+          done < <(find . -path './vendor' -prune -o -name '*.php' -type f -print)
+
+      - name: JS syntax check
+        run: |
+          node --check core/admin/app.js
+          node --check core/assets/js/island-loader.js
+          node --check core/islands/dist/ContactForm.js
+
+      - name: CLI smoke
+        run: |
+          php bin/atoll core:status
+          php bin/atoll plugin:list
+          php bin/atoll theme:list
+
+      - name: HTTP smoke
+        run: |
+          php -S 127.0.0.1:8088 -t . index.php >/tmp/server.log 2>&1 &
+          pid=$!
+          sleep 1
+          curl -fsS http://127.0.0.1:8088/ >/tmp/home.html
+          curl -fsS http://127.0.0.1:8088/admin >/tmp/admin.html
+          kill $pid

@@ -32,6 +32,7 @@ $printHelp = static function (): void {
     echo "  atoll content:index:rebuild                      Rebuild SQLite content index\n";
     echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
     echo "  atoll core:status                                Show active core path/version\n";
+    echo "  atoll core:sync [source|--source=<path>]         Sync bundled ./core from another core checkout\n";
     echo "  atoll core:check [channel]                       Check update channel for newer core\n";
     echo "  atoll core:update <source> [--no-backup] [--keep-old]\n";
     echo "                                                   Update core from local directory/release\n";
@@ -206,13 +207,51 @@ switch ($command) {
 
     case 'core:status':
         $version = readCoreVersion($corePath);
+        $bundledCorePath = rtrim($root . '/core', '/');
+        $bundledVersion = readCoreVersion($bundledCorePath);
+        $usesBundledCore = corePathsEqual($corePath, $bundledCorePath);
         $channel = (string) Config::get($config, 'updater.channel', 'stable');
         $manifest = (string) Config::get($config, 'updater.manifest_url', '');
 
         echo "Core path: {$corePath}\n";
         echo "Core version: {$version}\n";
+        echo "Bundled core: {$bundledCorePath} ({$bundledVersion})\n";
+        echo "Runtime source: " . ($usesBundledCore ? 'bundled ./core' : 'external core.path') . "\n";
+        if (!$usesBundledCore) {
+            echo "Hint: run 'php bin/atoll core:sync' to refresh bundled ./core from active core.path.\n";
+        }
         echo "Update channel: {$channel}\n";
         echo "Manifest URL: " . ($manifest !== '' ? $manifest : '(not configured)') . "\n";
+        exit(0);
+
+    case 'core:sync':
+        $sourceArg = getFlagValue($args, '--source') ?? firstPositionalArg($args, 1);
+        $bundledCorePath = rtrim($root . '/core', '/');
+        if ($sourceArg === null || trim($sourceArg) === '') {
+            if (!corePathsEqual($corePath, $bundledCorePath) && is_file($corePath . '/src/bootstrap.php')) {
+                $sourceArg = $corePath;
+            } else {
+                $siblingCore = rtrim(dirname($root), '/') . '/atoll-core';
+                if (is_file($siblingCore . '/src/bootstrap.php')) {
+                    $sourceArg = $siblingCore;
+                } else {
+                    fail("Usage: atoll core:sync [source|--source=<path>]\nNo source detected (active core.path is bundled and ../atoll-core is missing).");
+                }
+            }
+        }
+
+        $sourceCore = detectCoreSource((string) $sourceArg);
+        if (corePathsEqual($sourceCore, $bundledCorePath)) {
+            echo "Bundled ./core is already the selected source ({$sourceCore}).\n";
+            exit(0);
+        }
+
+        $result = syncBundledCoreFromSource($root, $sourceCore, $bundledCorePath);
+        echo "Bundled core synced.\n";
+        echo "Source: {$sourceCore}\n";
+        echo "Destination: {$bundledCorePath}\n";
+        echo "Source version: " . (string) ($result['source_version'] ?? 'unknown') . "\n";
+        echo "Destination version: " . (string) ($result['destination_version'] ?? 'unknown') . "\n";
         exit(0);
 
     case 'core:check':
@@ -1102,6 +1141,78 @@ function resolveCorePath(string $root, array $config): string
     return rtrim($root . '/' . ltrim($configured, '/'), '/');
 }
 
+function corePathsEqual(string $a, string $b): bool
+{
+    $ra = realpath($a);
+    $rb = realpath($b);
+    if ($ra !== false && $rb !== false) {
+        return rtrim(str_replace('\\', '/', $ra), '/') === rtrim(str_replace('\\', '/', $rb), '/');
+    }
+
+    return rtrim(str_replace('\\', '/', $a), '/') === rtrim(str_replace('\\', '/', $b), '/');
+}
+
+/**
+ * @return array{source_version:string,destination_version:string}
+ */
+function syncBundledCoreFromSource(string $root, string $sourceCore, string $bundledCore): array
+{
+    if (!is_file($sourceCore . '/src/bootstrap.php')) {
+        fail("Invalid core source: {$sourceCore}");
+    }
+
+    $sourceVersion = readCoreVersion($sourceCore);
+    $syncCacheRoot = $root . '/cache';
+    $tmpCopy = createUniqueWorkDir($syncCacheRoot, '.core-sync-new-');
+    $backupCopy = createUniqueWorkDir($syncCacheRoot, '.core-sync-old-');
+
+    copyDirectoryFiltered($sourceCore, $tmpCopy, [
+        '.git',
+        '.github',
+        '.claude',
+        '.playwright-cli',
+        '.DS_Store',
+        'vendor',
+        'cache',
+        'backups',
+        'node_modules',
+        'output',
+        'admin-src',
+    ]);
+
+    if (!is_file($tmpCopy . '/src/bootstrap.php')) {
+        rrmdir($tmpCopy);
+        rrmdir($backupCopy);
+        fail('Core sync aborted: copied source is missing src/bootstrap.php');
+    }
+
+    rrmdir($backupCopy);
+    $hasBundledCore = is_dir($bundledCore);
+    if ($hasBundledCore) {
+        if (!rename($bundledCore, $backupCopy)) {
+            rrmdir($tmpCopy);
+            fail("Could not move existing bundled core out of the way: {$bundledCore}");
+        }
+    }
+
+    if (!rename($tmpCopy, $bundledCore)) {
+        if ($hasBundledCore && is_dir($backupCopy)) {
+            @rename($backupCopy, $bundledCore);
+        }
+        rrmdir($tmpCopy);
+        fail("Could not activate synced bundled core: {$bundledCore}");
+    }
+
+    if ($hasBundledCore && is_dir($backupCopy)) {
+        rrmdir($backupCopy);
+    }
+
+    return [
+        'source_version' => $sourceVersion,
+        'destination_version' => readCoreVersion($bundledCore),
+    ];
+}
+
 /**
  * @return array<int, array{id:string,source:string}>
  */
@@ -1756,6 +1867,60 @@ function copyDirectory(string $source, string $destination): void
                 mkdir($targetDir, 0775, true);
             }
             copy($sourcePath, $targetPath);
+        }
+    }
+}
+
+/**
+ * @param array<int, string> $excludeNames
+ */
+function copyDirectoryFiltered(string $source, string $destination, array $excludeNames): void
+{
+    if (!is_dir($source)) {
+        fail("copyDirectoryFiltered source missing: {$source}");
+    }
+
+    if (!is_dir($destination)) {
+        mkdir($destination, 0775, true);
+    }
+
+    $excludeMap = [];
+    foreach ($excludeNames as $name) {
+        $excludeMap[$name] = true;
+    }
+
+    $entries = scandir($source);
+    if ($entries === false) {
+        fail("Could not read directory: {$source}");
+    }
+
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+        if (isset($excludeMap[$entry])) {
+            continue;
+        }
+
+        $from = $source . '/' . $entry;
+        $to = $destination . '/' . $entry;
+
+        if (is_link($from) || is_file($from)) {
+            $targetDir = dirname($to);
+            if (!is_dir($targetDir)) {
+                mkdir($targetDir, 0775, true);
+            }
+            if (!copy($from, $to)) {
+                fail("Could not copy file: {$from}");
+            }
+            continue;
+        }
+
+        if (is_dir($from)) {
+            if (!is_dir($to) && !mkdir($to, 0775, true) && !is_dir($to)) {
+                fail("Could not create directory: {$to}");
+            }
+            copyDirectoryFiltered($from, $to, $excludeNames);
         }
     }
 }

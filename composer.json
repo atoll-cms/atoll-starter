@@ -25,6 +25,7 @@
     "serve": "@php bin/atoll serve",
     "dev": "@php bin/atoll dev",
     "dev-local": "@php bin/atoll dev:local",
+    "core:sync": "@php bin/atoll core:sync",
     "cache:clear": "@php bin/atoll cache:clear"
   }
 }

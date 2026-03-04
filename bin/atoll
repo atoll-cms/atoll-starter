@@ -53,6 +53,9 @@ switch ($command) {
     case 'dev':
         $port = (int) ($args[1] ?? 8080);
         $watchers = startFrontendWatchers($root, $corePath, $config);
+        if ($watchers === []) {
+            echo "No frontend source packages detected. Starting PHP server only.\n";
+        }
         register_shutdown_function(static function () use (&$watchers): void {
             stopBackgroundProcesses($watchers);
         });
@@ -62,7 +65,10 @@ switch ($command) {
 
     case 'serve':
         $port = (int) ($args[1] ?? 8080);
-        runFrontendBuildsOnce($root, $corePath, $config);
+        $built = runFrontendBuildsOnce($root, $corePath, $config);
+        if ($built === 0) {
+            echo "No frontend source packages detected. Starting PHP server only.\n";
+        }
         $exitCode = runPhpServer($root, $port);
         exit($exitCode);
 

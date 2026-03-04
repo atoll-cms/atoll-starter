@@ -1,0 +1,8 @@
+- label: Start
+  url: /
+- label: Redaktion
+  url: /about
+- label: Artikel
+  url: /blog
+- label: Kontakt
+  url: /contact

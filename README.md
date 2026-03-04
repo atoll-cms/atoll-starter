@@ -168,6 +168,15 @@ php bin/atoll theme:list
 php bin/atoll theme:activate business
 ```
 
+Preset-Content passend zum Theme anwenden:
+
+```bash
+php bin/atoll preset:list
+php bin/atoll preset:apply business
+# optional mit Ueberschreiben
+php bin/atoll preset:apply editorial --force
+```
+
 ## Eigene Plugins
 
 Ein Plugin ist ein Ordner unter `plugins/<id>/` mit `plugin.php`:
@@ -236,6 +245,8 @@ php bin/atoll theme:list
 php bin/atoll theme:activate business
 php bin/atoll theme:install /path/to/theme
 php bin/atoll theme:install:registry core-default
+php bin/atoll preset:list
+php bin/atoll preset:apply business
 ```
 
 ## Installer

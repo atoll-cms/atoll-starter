@@ -43,6 +43,8 @@ $printHelp = static function (): void {
     echo "  atoll theme:activate <id>                        Activate a theme\n";
     echo "  atoll theme:install <source> [--force]           Install theme from folder/zip/url\n";
     echo "  atoll theme:install:registry <id> [--force]      Install theme via theme-registry.json\n";
+    echo "  atoll preset:list                                List starter content presets\n";
+    echo "  atoll preset:apply <id> [--force] [--no-theme]   Apply content preset to project\n";
     echo "  atoll islands:build                              Build hint for island bundles\n";
 };
 
@@ -399,6 +401,74 @@ switch ($command) {
         echo "Theme installed from registry: " . $result['id'] . "\n";
         exit(0);
 
+    case 'preset:list':
+        $presets = listPresets($root);
+        if ($presets === []) {
+            echo "No presets found.\n";
+            exit(0);
+        }
+
+        foreach ($presets as $preset) {
+            $id = (string) ($preset['id'] ?? '');
+            $theme = (string) ($preset['theme'] ?? 'default');
+            $description = (string) ($preset['description'] ?? '');
+            echo sprintf("- %s (theme: %s)%s\n", $id, $theme, $description !== '' ? " - {$description}" : '');
+        }
+        exit(0);
+
+    case 'preset:apply':
+        $id = $args[1] ?? null;
+        if ($id === null || trim($id) === '') {
+            fail('Usage: atoll preset:apply <id> [--force] [--no-theme]');
+        }
+
+        $id = trim($id);
+        $force = in_array('--force', $args, true);
+        $setTheme = !in_array('--no-theme', $args, true);
+        $preset = loadPreset($root, $id);
+        if ($preset === null) {
+            fail("Preset not found: {$id}");
+        }
+
+        $sourceContentDir = rtrim((string) ($preset['path'] ?? ''), '/') . '/content';
+        if (!is_dir($sourceContentDir)) {
+            fail("Preset content missing: {$sourceContentDir}");
+        }
+
+        $targetContentDir = $root . '/content';
+        copyPresetTree($sourceContentDir, $targetContentDir, $force);
+
+        $appliedTheme = '';
+        if ($setTheme) {
+            $theme = trim((string) ($preset['theme'] ?? ''));
+            if ($theme !== '') {
+                $themes = listAvailableThemes($root, $corePath);
+                $themeExists = false;
+                foreach ($themes as $entry) {
+                    if (($entry['id'] ?? null) === $theme) {
+                        $themeExists = true;
+                        break;
+                    }
+                }
+
+                if ($themeExists) {
+                    $appearance = Config::get($config, 'appearance', []);
+                    $appearance = is_array($appearance) ? $appearance : [];
+                    $appearance['theme'] = $theme;
+                    $config['appearance'] = $appearance;
+                    Config::save($configPath, $config);
+                    $appliedTheme = $theme;
+                }
+            }
+        }
+
+        echo "Preset applied: {$id}\n";
+        if ($appliedTheme !== '') {
+            echo "Theme activated: {$appliedTheme}\n";
+        }
+        echo "Tip: clear cache via 'php bin/atoll cache:clear' if needed.\n";
+        exit(0);
+
     case 'islands:build':
         echo "Build islands locally with Vite and commit bundles to /core/islands/dist or /islands/dist.\n";
         echo "Server runtime does not require Node.js.\n";
@@ -460,6 +530,118 @@ function listAvailableThemes(string $root, string $corePath): array
 
     ksort($rows);
     return array_values($rows);
+}
+
+/**
+ * @return array<int, array{id:string,theme:string,description:string,path:string}>
+ */
+function listPresets(string $root): array
+{
+    $baseDir = rtrim($root, '/') . '/content/presets';
+    if (!is_dir($baseDir)) {
+        return [];
+    }
+
+    $dirs = glob($baseDir . '/*', GLOB_ONLYDIR) ?: [];
+    $rows = [];
+    foreach ($dirs as $dir) {
+        $id = basename($dir);
+        $preset = loadPreset($root, $id);
+        if ($preset === null) {
+            continue;
+        }
+        $rows[] = $preset;
+    }
+
+    usort($rows, static fn (array $a, array $b): int => strcmp((string) $a['id'], (string) $b['id']));
+    return $rows;
+}
+
+/**
+ * @return array{id:string,theme:string,description:string,path:string}|null
+ */
+function loadPreset(string $root, string $id): ?array
+{
+    $cleanId = basename(trim($id));
+    if ($cleanId === '' || $cleanId === '.' || $cleanId === '..') {
+        return null;
+    }
+
+    $dir = rtrim($root, '/') . '/content/presets/' . $cleanId;
+    if (!is_dir($dir)) {
+        return null;
+    }
+
+    $metaFile = $dir . '/preset.yaml';
+    if (!is_file($metaFile)) {
+        return null;
+    }
+
+    $meta = Yaml::parse((string) file_get_contents($metaFile));
+    if (!is_array($meta)) {
+        return null;
+    }
+
+    return [
+        'id' => $cleanId,
+        'theme' => (string) ($meta['theme'] ?? ''),
+        'description' => (string) ($meta['description'] ?? ''),
+        'path' => $dir,
+    ];
+}
+
+function copyPresetTree(string $sourceDir, string $targetDir, bool $force): void
+{
+    $sourceDir = rtrim($sourceDir, '/');
+    $targetDir = rtrim($targetDir, '/');
+    $files = listFilesRecursive($sourceDir);
+
+    $conflicts = [];
+    foreach ($files as $file) {
+        $relative = ltrim(substr($file, strlen($sourceDir)), '/');
+        $target = $targetDir . '/' . $relative;
+        if (!$force && file_exists($target)) {
+            $conflicts[] = $relative;
+        }
+    }
+
+    if ($conflicts !== []) {
+        $preview = array_slice($conflicts, 0, 8);
+        $suffix = count($conflicts) > 8 ? ' ...' : '';
+        fail(
+            "Preset would overwrite existing files. Use --force.\n- "
+            . implode("\n- ", $preview)
+            . $suffix
+        );
+    }
+
+    foreach ($files as $file) {
+        $relative = ltrim(substr($file, strlen($sourceDir)), '/');
+        $target = $targetDir . '/' . $relative;
+        $targetDirname = dirname($target);
+        if (!is_dir($targetDirname)) {
+            mkdir($targetDirname, 0775, true);
+        }
+        copy($file, $target);
+    }
+}
+
+/** @return array<int, string> */
+function listFilesRecursive(string $dir): array
+{
+    $files = [];
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)
+    );
+
+    foreach ($it as $item) {
+        if ($item->isFile()) {
+            $files[] = $item->getPathname();
+        }
+    }
+
+    sort($files);
+    return $files;
 }
 
 function readCoreVersion(string $corePath): string

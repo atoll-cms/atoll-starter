@@ -1,0 +1,8 @@
+- label: Start
+  url: /
+- label: Leistungen
+  url: /about
+- label: News
+  url: /blog
+- label: Kontakt
+  url: /contact

@@ -1,0 +1,8 @@
+- label: Start
+  url: /
+- label: Studio
+  url: /about
+- label: Cases
+  url: /blog
+- label: Kontakt
+  url: /contact

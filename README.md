@@ -162,22 +162,7 @@ php core/tools/migrate-kirby.php --source=/path/kirby/content --output=content
 
 ## Performance-Benchmarks
 
-Benchmark-Targets und Regeln liegen unter:
-
-- `benchmarks/targets.yaml`
-- `benchmarks/README.md`
-
-JSON-Benchmark laufen lassen:
-
-```bash
-php bin/atoll benchmark:run --config=benchmarks/targets.yaml --rounds=3
-```
-
-Markdown-Report erzeugen:
-
-```bash
-php bin/atoll benchmark:report --out=benchmarks/results/latest.md
-```
+Cross-CMS-Benchmarks (atoll vs. WordPress/Kirby/Grav) liegen im separaten Repo `atoll-benchmarks`.
 
 ## Plugins und Themes
 
@@ -285,8 +270,6 @@ php bin/atoll theme:install:registry business
 php bin/atoll theme:install:registry studio-pro --license=YOUR_KEY
 php bin/atoll preset:list
 php bin/atoll preset:apply business
-php bin/atoll benchmark:run --rounds=3
-php bin/atoll benchmark:report --out=benchmarks/results/latest.md
 ```
 
 ## Installer

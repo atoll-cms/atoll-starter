@@ -50,10 +50,6 @@ $printHelp = static function (): void {
     echo "  atoll preset:list                                List starter content presets\n";
     echo "  atoll preset:apply <id> [--force] [--no-theme]   Apply content preset to project\n";
     echo "  atoll islands:build                              Build frontend bundles once\n";
-    echo "  atoll benchmark:run [--config=<path>] [--out=<path>] [--rounds=<n>] [--only=<csv>]\n";
-    echo "                      [--max-error-rate=<percent>]\n";
-    echo "                                                   Run HTTP benchmarks and write JSON report\n";
-    echo "  atoll benchmark:report [--input=<json>] [--out=<md>]  Render markdown report from JSON\n";
 };
 
 switch ($command) {
@@ -575,50 +571,6 @@ switch ($command) {
         $built = runFrontendBuildsOnce($root, $corePath, $config);
         echo $built > 0 ? "Frontend bundles built.\n" : "No frontend source packages detected.\n";
         exit(0);
-
-    case 'benchmark:run':
-        $configFile = getFlagValue($args, '--config') ?? 'benchmarks/targets.yaml';
-        $outFile = getFlagValue($args, '--out') ?? ('benchmarks/results/' . date('Ymd-His') . '.json');
-        $roundsRaw = getFlagValue($args, '--rounds');
-        $rounds = max(1, (int) ($roundsRaw ?? 3));
-        $only = getFlagValue($args, '--only');
-        $maxErrorRate = getFlagValue($args, '--max-error-rate');
-
-        $benchmarkScript = $corePath . '/tools/benchmark-run.php';
-        if (!is_file($benchmarkScript)) {
-            fail("Benchmark runner not found in core: {$benchmarkScript}");
-        }
-
-        $command = sprintf(
-            'php %s --root=%s --config=%s --out=%s --rounds=%d%s%s',
-            escapeshellarg($benchmarkScript),
-            escapeshellarg($root),
-            escapeshellarg($configFile),
-            escapeshellarg($outFile),
-            $rounds,
-            ($only !== null && trim($only) !== '') ? ' --only=' . escapeshellarg(trim($only)) : '',
-            ($maxErrorRate !== null && trim($maxErrorRate) !== '') ? ' --max-error-rate=' . escapeshellarg(trim($maxErrorRate)) : ''
-        );
-        passthru($command, $exitCode);
-        exit((int) $exitCode);
-
-    case 'benchmark:report':
-        $inputFile = getFlagValue($args, '--input');
-        $outFile = getFlagValue($args, '--out');
-        $reportScript = $corePath . '/tools/benchmark-report.php';
-        if (!is_file($reportScript)) {
-            fail("Benchmark report script not found in core: {$reportScript}");
-        }
-
-        $command = sprintf(
-            'php %s --root=%s%s%s',
-            escapeshellarg($reportScript),
-            escapeshellarg($root),
-            ($inputFile !== null && trim($inputFile) !== '') ? ' --input=' . escapeshellarg(trim($inputFile)) : '',
-            ($outFile !== null && trim($outFile) !== '') ? ' --out=' . escapeshellarg(trim($outFile)) : ''
-        );
-        passthru($command, $exitCode);
-        exit((int) $exitCode);
 
     case 'help':
     default:

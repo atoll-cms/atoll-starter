@@ -117,6 +117,34 @@ backup:
 
 Wenn ein Remote-Upload fehlschlaegt, bleibt das lokale ZIP erhalten (`partial`-Status mit Fehlerdetails).
 
+### Mail-Treiber (SMTP + API)
+
+Unter `smtp.driver` werden folgende Modi unterstuetzt:
+- `mail` (PHP `mail()`)
+- `smtp`
+- `sendmail`
+- `postmark` (API)
+- `mailgun` (API)
+- `ses` (AWS SES API)
+
+Beispiel:
+
+```yaml
+smtp:
+  driver: ses
+  from_email: noreply@example.com
+  from_name: atoll-cms
+  api:
+    ses:
+      region: eu-central-1
+      access_key: env:AWS_ACCESS_KEY_ID
+      secret_key: env:AWS_SECRET_ACCESS_KEY
+      session_token: env:AWS_SESSION_TOKEN
+      endpoint: ''
+```
+
+Alle Secrets koennen als `env:VARIABLE_NAME` hinterlegt werden.
+
 ### Formulare: Anti-Spam und optionales CAPTCHA
 
 Der Core validiert standardmaessig CSRF + Honeypot und unterstuetzt zusaetzlich:

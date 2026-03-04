@@ -185,8 +185,27 @@ final class InstallerController
                 'username' => '',
                 'password' => '',
                 'encryption' => 'tls',
+                'sendmail_path' => '',
                 'from_email' => 'noreply@example.com',
                 'from_name' => $name,
+                'api' => [
+                    'postmark' => [
+                        'token' => '',
+                        'endpoint' => 'https://api.postmarkapp.com/email',
+                    ],
+                    'mailgun' => [
+                        'domain' => '',
+                        'api_key' => '',
+                        'endpoint' => '',
+                    ],
+                    'ses' => [
+                        'region' => 'eu-central-1',
+                        'access_key' => '',
+                        'secret_key' => '',
+                        'session_token' => '',
+                        'endpoint' => '',
+                    ],
+                ],
             ],
             'seo' => [
                 'default_title' => $name,

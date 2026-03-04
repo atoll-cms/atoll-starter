@@ -23,6 +23,7 @@
       "@php bin/atoll cache:clear"
     ],
     "serve": "@php bin/atoll serve",
+    "dev": "@php bin/atoll dev",
     "cache:clear": "@php bin/atoll cache:clear"
   }
 }

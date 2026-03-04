@@ -22,7 +22,7 @@ $corePath = resolveCorePath($root, $config);
 $printHelp = static function (): void {
     echo "atoll-cms CLI\n\n";
     echo "Commands:\n";
-    echo "  atoll serve [port]                               Start local PHP server\n";
+    echo "  atoll serve|dev [port]                           Start local PHP server\n";
     echo "  atoll cache:clear                                Clear HTML cache\n";
     echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
     echo "  atoll core:status                                Show active core path/version\n";
@@ -49,6 +49,7 @@ $printHelp = static function (): void {
 };
 
 switch ($command) {
+    case 'dev':
     case 'serve':
         $port = (int) ($args[1] ?? 8080);
         $cmd = sprintf('php -S localhost:%d -t %s %s/index.php', $port, escapeshellarg($root), escapeshellarg($root));

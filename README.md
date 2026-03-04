@@ -55,7 +55,7 @@ composer install
 2. Development Server starten:
 
 ```bash
-php bin/atoll serve 8080
+php bin/atoll dev 8080
 ```
 
 3. Frontend/Admin:

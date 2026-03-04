@@ -24,6 +24,8 @@ $printHelp = static function (): void {
     echo "Commands:\n";
     echo "  atoll serve [port]                               Build frontend bundles once, then start server\n";
     echo "  atoll dev [port]                                 Watch frontend bundles and start server\n";
+    echo "  atoll dev:local [port] [--activate=<id>]         Link sibling repos (core/themes/plugins) and start dev\n";
+    echo "                   [--force-links] [--setup-only]\n";
     echo "  atoll cache:clear                                Clear HTML cache\n";
     echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
     echo "  atoll core:status                                Show active core path/version\n";
@@ -50,6 +52,35 @@ $printHelp = static function (): void {
 };
 
 switch ($command) {
+    case 'dev-local':
+    case 'dev:local':
+        $port = (int) (firstPositionalArg($args, 1) ?? 8080);
+        $forceLinks = in_array('--force-links', $args, true);
+        $setupOnly = in_array('--setup-only', $args, true);
+        $activateTheme = getFlagValue($args, '--activate');
+
+        $messages = setupLocalDevWorkspace($root, $configPath, $forceLinks, $activateTheme);
+        foreach ($messages as $message) {
+            echo $message . "\n";
+        }
+
+        if ($setupOnly) {
+            exit(0);
+        }
+
+        $config = Config::load($configPath);
+        $corePath = resolveCorePath($root, $config);
+        $watchers = startFrontendWatchers($root, $corePath, $config);
+        if ($watchers === []) {
+            echo "No frontend source packages detected. Starting PHP server only.\n";
+        }
+        register_shutdown_function(static function () use (&$watchers): void {
+            stopBackgroundProcesses($watchers);
+        });
+        $exitCode = runPhpServer($root, $port);
+        stopBackgroundProcesses($watchers);
+        exit($exitCode);
+
     case 'dev':
         $port = (int) ($args[1] ?? 8080);
         $watchers = startFrontendWatchers($root, $corePath, $config);
@@ -522,6 +553,194 @@ function fail(string $message): never
 {
     fwrite(STDERR, $message . "\n");
     exit(1);
+}
+
+/**
+ * @return array<int, string>
+ */
+function setupLocalDevWorkspace(
+    string $root,
+    string $configPath,
+    bool $forceLinks = false,
+    ?string $activateTheme = null
+): array {
+    $messages = [];
+    $workspaceRoot = realpath(dirname($root));
+    if ($workspaceRoot === false) {
+        fail('Could not resolve workspace root for local dev setup.');
+    }
+
+    $config = Config::load($configPath);
+    $configChanged = false;
+
+    $coreCandidate = rtrim($workspaceRoot, '/') . '/atoll-core';
+    if (is_dir($coreCandidate)) {
+        $desiredCorePath = '../atoll-core';
+        $currentCorePath = (string) Config::get($config, 'core.path', 'core');
+        if ($currentCorePath !== $desiredCorePath) {
+            $coreConfig = Config::get($config, 'core', []);
+            $coreConfig = is_array($coreConfig) ? $coreConfig : [];
+            $coreConfig['path'] = $desiredCorePath;
+            $config['core'] = $coreConfig;
+            $configChanged = true;
+            $messages[] = "Core path set to '{$desiredCorePath}'.";
+        } else {
+            $messages[] = "Core path already set to '{$desiredCorePath}'.";
+        }
+    } else {
+        $messages[] = "No sibling core repo found at {$coreCandidate}.";
+    }
+
+    $messages = array_merge(
+        $messages,
+        linkSiblingRepositories(
+            globPattern: rtrim($workspaceRoot, '/') . '/atoll-theme-*',
+            namePrefix: 'atoll-theme-',
+            destinationRoot: rtrim($root, '/') . '/themes',
+            projectRoot: $root,
+            kind: 'theme',
+            forceLinks: $forceLinks
+        )
+    );
+
+    $messages = array_merge(
+        $messages,
+        linkSiblingRepositories(
+            globPattern: rtrim($workspaceRoot, '/') . '/atoll-plugin-*',
+            namePrefix: 'atoll-plugin-',
+            destinationRoot: rtrim($root, '/') . '/plugins',
+            projectRoot: $root,
+            kind: 'plugin',
+            forceLinks: $forceLinks
+        )
+    );
+
+    if ($activateTheme !== null && $activateTheme !== '') {
+        $themeId = normalizePackageId($activateTheme);
+        if ($themeId === '') {
+            fail('Invalid --activate value.');
+        }
+
+        $corePath = resolveCorePath($root, $config);
+        $themeExists = false;
+        foreach (listAvailableThemes($root, $corePath) as $theme) {
+            if (($theme['id'] ?? '') === $themeId) {
+                $themeExists = true;
+                break;
+            }
+        }
+
+        if ($themeExists) {
+            $appearance = Config::get($config, 'appearance', []);
+            $appearance = is_array($appearance) ? $appearance : [];
+            if (($appearance['theme'] ?? null) !== $themeId) {
+                $appearance['theme'] = $themeId;
+                $config['appearance'] = $appearance;
+                $configChanged = true;
+                $messages[] = "Activated theme '{$themeId}' in config.";
+            } else {
+                $messages[] = "Theme '{$themeId}' already active in config.";
+            }
+        } else {
+            $messages[] = "Theme '{$themeId}' not found after linking. Activation skipped.";
+        }
+    }
+
+    if ($configChanged) {
+        Config::save($configPath, $config);
+        $messages[] = 'Saved local dev configuration.';
+    }
+
+    return $messages;
+}
+
+/**
+ * @return array<int, string>
+ */
+function linkSiblingRepositories(
+    string $globPattern,
+    string $namePrefix,
+    string $destinationRoot,
+    string $projectRoot,
+    string $kind,
+    bool $forceLinks
+): array {
+    $messages = [];
+    $sources = glob($globPattern, GLOB_ONLYDIR) ?: [];
+    sort($sources, SORT_STRING);
+    if ($sources === []) {
+        return $messages;
+    }
+
+    if (!is_dir($destinationRoot)) {
+        mkdir($destinationRoot, 0775, true);
+    }
+
+    foreach ($sources as $source) {
+        $baseName = basename($source);
+        if (!str_starts_with($baseName, $namePrefix)) {
+            continue;
+        }
+
+        $id = normalizePackageId(substr($baseName, strlen($namePrefix)));
+        if ($id === '') {
+            continue;
+        }
+
+        $target = rtrim($destinationRoot, '/') . '/' . $id;
+        $messages[] = linkLocalRepository($source, $target, $projectRoot, $kind, $id, $forceLinks);
+    }
+
+    return $messages;
+}
+
+function linkLocalRepository(
+    string $source,
+    string $target,
+    string $projectRoot,
+    string $kind,
+    string $id,
+    bool $forceLinks
+): string {
+    $sourceReal = realpath($source);
+    if ($sourceReal === false) {
+        return "Skip {$kind} '{$id}' (source not readable: {$source}).";
+    }
+
+    if (!is_dir(dirname($target))) {
+        mkdir(dirname($target), 0775, true);
+    }
+
+    if (is_link($target)) {
+        $currentReal = realpath($target);
+        if ($currentReal !== false && $currentReal === $sourceReal) {
+            return "Linked {$kind} '{$id}' already up to date.";
+        }
+
+        if (!$forceLinks) {
+            return "Skip {$kind} '{$id}' (symlink exists, use --force-links to replace).";
+        }
+
+        unlink($target);
+    } elseif (file_exists($target)) {
+        if (!$forceLinks) {
+            return "Skip {$kind} '{$id}' (path exists, use --force-links to replace).";
+        }
+
+        $backupDir = rtrim($projectRoot, '/') . '/backups/dev-local-conflicts';
+        if (!is_dir($backupDir)) {
+            mkdir($backupDir, 0775, true);
+        }
+
+        $backupPath = createUniqueBackupPath($backupDir, $kind . '-' . $id, '.bak');
+        rename($target, $backupPath);
+    }
+
+    if (!symlink($sourceReal, $target)) {
+        fail("Could not create symlink for {$kind} '{$id}' -> {$sourceReal}");
+    }
+
+    return "Linked {$kind} '{$id}' -> {$sourceReal}";
 }
 
 function runPhpServer(string $root, int $port): int

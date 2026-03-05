@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Newsletter</title>
+    <style>
+      :root {
+        --bg: #0b1416;
+        --surface: #111f23;
+        --surface-2: #192c31;
+        --line: #243a40;
+        --text: #ecf2f0;
+        --muted: #8aa3a8;
+        --brand: #f59e0b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 1rem;
+        font: 14px/1.45 Outfit, -apple-system, BlinkMacSystemFont, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+      }
+      .card h2 {
+        margin: 0;
+        padding: 0.9rem 1rem;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.95rem;
+      }
+      .body { padding: 1rem; }
+      .row {
+        display: grid;
+        grid-template-columns: 200px 1fr;
+        gap: 0.8rem;
+        margin-bottom: 0.65rem;
+        align-items: center;
+      }
+      .row label { color: var(--muted); font-size: 0.8rem; }
+      input, select, textarea {
+        width: 100%;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--surface-2);
+        color: var(--text);
+        padding: 0.45rem 0.55rem;
+        font: inherit;
+      }
+      textarea { min-height: 180px; }
+      .toolbar {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        justify-content: flex-end;
+      }
+      button {
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--surface-2);
+        color: var(--text);
+        padding: 0.45rem 0.75rem;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--brand);
+        border-color: #fbbf24;
+        color: #0b1416;
+        font-weight: 600;
+      }
+      table { width: 100%; border-collapse: collapse; }
+      th, td {
+        border-bottom: 1px solid var(--line);
+        padding: 0.45rem;
+        text-align: left;
+        vertical-align: top;
+      }
+      th { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+      .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      .notice { padding: 0.55rem 0.65rem; border-radius: 8px; margin-bottom: 0.8rem; border: 1px solid var(--line); }
+      .notice.ok { background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.4); color: #86efac; }
+      .notice.err { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.4); color: #fda4af; }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        background: var(--surface-2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.6rem;
+        max-height: 220px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Newsletter-Kampagne</h2>
+      <div class="body">
+        <div id="notice"></div>
+        <form id="campaign-form">
+          <div class="row">
+            <label for="subject">Betreff</label>
+            <input id="subject" name="subject" type="text" required>
+          </div>
+          <div class="row">
+            <label for="segment">Segment</label>
+            <select id="segment" name="segment">
+              <option value="all">all</option>
+              <option value="tag:vip">tag:vip</option>
+              <option value="tag:customers">tag:customers</option>
+            </select>
+          </div>
+          <div class="row">
+            <label for="body">Body</label>
+            <textarea id="body" name="body" required placeholder="Hallo {{name}}, ..."></textarea>
+          </div>
+          <div class="row">
+            <label for="dry_run">Modus</label>
+            <select id="dry_run" name="dry_run">
+              <option value="1">Dry run (kein Versand)</option>
+              <option value="0">Echtversand</option>
+            </select>
+          </div>
+          <div class="toolbar">
+            <button id="campaign-submit" class="primary" type="submit">Kampagne ausfuehren</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Subscriber</h2>
+      <div class="body">
+        <div class="toolbar" style="margin-bottom: 0.8rem;">
+          <button id="reload-subs" type="button">Subscriber neu laden</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>E-Mail</th>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Tags</th>
+              <th>Seit</th>
+            </tr>
+          </thead>
+          <tbody id="subscribers-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Campaign Log</h2>
+      <div class="body">
+        <div class="toolbar" style="margin-bottom: 0.8rem; justify-content: space-between;">
+          <span style="color: var(--muted);">Neueste Runs inklusive Dry-Run</span>
+          <button id="reload-log" type="button">Log neu laden</button>
+        </div>
+        <pre id="log"></pre>
+      </div>
+    </div>
+
+    <script defer src="/plugins/newsletter/admin/newsletter.js"></script>
+  </body>
+</html>

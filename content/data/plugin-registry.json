@@ -63,6 +63,24 @@
     "price_eur": 0
   },
   {
+    "id": "members",
+    "name": "Members",
+    "type": "official",
+    "description": "Member auth, role management, and members-only page gating.",
+    "source": "plugins/members",
+    "seller": "atoll-cms",
+    "price_eur": 0
+  },
+  {
+    "id": "newsletter",
+    "name": "Newsletter",
+    "type": "official",
+    "description": "Subscriber management and campaign dispatch with dry-run support.",
+    "source": "plugins/newsletter",
+    "seller": "atoll-cms",
+    "price_eur": 0
+  },
+  {
     "id": "booking-pro",
     "name": "Booking Pro",
     "type": "marketplace",

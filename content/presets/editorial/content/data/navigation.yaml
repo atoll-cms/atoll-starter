@@ -1,8 +1,8 @@
-- label: Start
+- label: Home
   url: /
-- label: Redaktion
+- label: Editorial
   url: /about
-- label: Artikel
+- label: Articles
   url: /blog
-- label: Kontakt
+- label: Contact
   url: /contact

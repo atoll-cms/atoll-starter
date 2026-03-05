@@ -1,10 +1,10 @@
 ---
-title: Editorial Publishing mit atoll
-excerpt: Redaktionsfreundlicher Starter mit Fokus auf Inhalte und Lesbarkeit.
+title: Editorial Publishing with atoll
+excerpt: Editorial-friendly starter focused on content and readability.
 ---
 
-Dieses Preset priorisiert saubere Typografie, schnelle Ladezeiten und einen klaren Schreib-Workflow.
+This preset prioritises clean typography, fast load times and a clear writing workflow.
 
-- Markdown-First mit Frontmatter
-- Wiederholbare Redaktionsprozesse
-- Versionierbarer Content im Repository
+- Markdown-first with frontmatter
+- Repeatable editorial processes
+- Versionable content in the repository

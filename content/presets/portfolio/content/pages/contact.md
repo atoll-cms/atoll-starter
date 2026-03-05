@@ -1,6 +1,6 @@
 ---
-title: Projekt anfragen
-excerpt: Lass uns ueber Scope, Timing und Budget sprechen.
+title: Request a Project
+excerpt: Let's talk about scope, timing and budget.
 ---
 
-Teile uns Ziel, Zeitplan und vorhandene Inhalte mit. Wir melden uns mit einem realistischen Setup-Vorschlag.
+Share your goal, timeline and existing assets. We will get back to you with a realistic setup proposal.

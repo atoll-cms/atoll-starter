@@ -1,12 +1,12 @@
 ---
-title: Leistungen
-excerpt: Beispieltext fuer Agentur- und Service-Angebote.
+title: Services
+excerpt: Example text for agency and service offerings.
 ---
 
-Wir entwickeln Websites, Dokumentationsportale und Content-Workflows auf Basis von atoll-cms.
+We build websites, documentation portals and content workflows based on atoll-cms.
 
-Typische Leistungen:
+Typical services:
 
-- Projekt-Setup und Theme-Anpassung
-- Migration von bestehenden CMS-Installationen
-- Wartung mit klaren Update- und Backup-Prozessen
+- Project setup and theme customisation
+- Migration from existing CMS installations
+- Maintenance with clear update and backup processes

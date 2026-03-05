@@ -1,9 +1,9 @@
 ---
-title: Projekt-Kickoff mit atoll
-excerpt: Wie wir neue Kundenprojekte in weniger als einem Tag starten.
+title: Project Kickoff with atoll
+excerpt: How we start new client projects in less than a day.
 date: 2026-04-10
 author: Team
 tags: [agency, process]
 ---
 
-Unser Kickoff-Setup besteht aus drei Schritten: Theme auswaehlen, Preset anwenden, Inhalte finalisieren.
+Our kickoff setup consists of three steps: choose a theme, apply a preset, finalise content.

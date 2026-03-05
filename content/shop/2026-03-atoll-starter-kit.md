@@ -5,7 +5,7 @@ currency: EUR
 sku: ATL-KIT-001
 stock: 40
 image: /assets/images/shop/atoll-starter-kit.jpg
-excerpt: Bundle aus Shirt, Stickern und Guide fuer neue Atoll-Projekte.
+excerpt: Bundle of shirt, stickers and guide for new atoll projects.
 ---
 
-Ideal fuer Demos, Workshops und Team-Onboarding.
+Ideal for demos, workshops and team onboarding.

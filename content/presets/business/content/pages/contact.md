@@ -1,8 +1,8 @@
 ---
-title: Kontakt
-excerpt: Schneller Einstieg fuer neue Anfragen.
+title: Contact
+excerpt: Quick entry point for new enquiries.
 ---
 
-Schick uns eine kurze Projektbeschreibung und den gewuenschten Go-live-Termin.
+Send us a brief project description and your desired go-live date.
 
-Wir melden uns mit einem konkreten Vorschlag fuer Scope und Umsetzung.
+We will get back to you with a concrete proposal for scope and implementation.

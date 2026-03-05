@@ -1,9 +1,9 @@
 ---
 title: Shop
-excerpt: Produktkatalog und Cart API des shop-Plugins.
+excerpt: Product catalogue and cart API of the shop plugin.
 ---
 
-Der Shop nutzt das Plugin `shop` und stellt JSON-Endpunkte bereit:
+The shop uses the `shop` plugin and provides JSON endpoints:
 
 - `/shop/products.json`
 - `/shop/cart`
@@ -13,7 +13,7 @@ Der Shop nutzt das Plugin `shop` und stellt JSON-Endpunkte bereit:
 - `/shop/cart/clear`
 - `/shop/checkout/intent`
 
-Beispiel:
+Example:
 
 ```bash
 curl -s http://localhost:8080/shop/products.json

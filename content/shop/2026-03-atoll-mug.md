@@ -5,7 +5,7 @@ currency: EUR
 sku: ATL-MUG-001
 stock: 120
 image: /assets/images/shop/atoll-mug.jpg
-excerpt: Keramikbecher mit atoll Branding.
+excerpt: Ceramic mug with atoll branding.
 ---
 
-Robuster Becher fuer den Agentur-Alltag.
+A sturdy mug for everyday agency life.

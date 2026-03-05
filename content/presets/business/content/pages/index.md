@@ -1,10 +1,10 @@
 ---
-title: Digitale Projekte ohne Infrastrukturstress
-excerpt: Corporate Starterseite fuer Agenturen und Dienstleister.
+title: Digital Projects Without Infrastructure Stress
+excerpt: Corporate starter page for agencies and service providers.
 ---
 
-atoll-cms liefert schnelle Kundenwebsites mit klarer Trennung zwischen **Core** und **Projektanpassungen**.
+atoll-cms delivers fast client websites with a clear separation between **core** and **project customisations**.
 
-- Shared-Hosting-faehig ohne Node im Betrieb
-- Signierte Core-Updates mit Rollback
-- Plugins und Themes sauber versionierbar
+- Shared-hosting-ready without Node in production
+- Signed core updates with rollback
+- Plugins and themes cleanly versionable

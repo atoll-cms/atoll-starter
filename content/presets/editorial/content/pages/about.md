@@ -1,8 +1,8 @@
 ---
-title: Redaktion
-excerpt: So arbeitet unser Team mit atoll-cms.
+title: Editorial
+excerpt: How our team works with atoll-cms.
 ---
 
-Unsere Redaktion plant Themen in Sprints, schreibt in Markdown und prueft jede Aenderung via Pull Request.
+Our editorial team plans topics in sprints, writes in Markdown and reviews every change via pull request.
 
-Dadurch bleiben Inhalte nachvollziehbar und technische Aenderungen getrennt.
+This keeps content traceable and technical changes separate.

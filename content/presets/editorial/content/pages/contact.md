@@ -1,6 +1,6 @@
 ---
-title: Kontakt zur Redaktion
-excerpt: Feedback, Themenvorschlaege und Kooperationen.
+title: Contact the Editorial Team
+excerpt: Feedback, topic suggestions and collaborations.
 ---
 
-Du hast ein Thema fuer unsere Redaktion oder moechtest mit uns arbeiten? Schreib uns direkt.
+Have a topic for our editorial team or want to work with us? Write to us directly.

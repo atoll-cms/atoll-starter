@@ -1,5 +1,5 @@
 honeypot: website
-success_message: Vielen Dank, wir melden uns.
+success_message: Thank you, we will be in touch.
 anti_spam:
   min_seconds: 2
   timestamp_field: _atoll_ts
@@ -24,10 +24,10 @@ fields:
 
 mail:
   to: admin@example.com
-  subject: Neue Kontaktanfrage
+  subject: New contact request
   template: |
     Name: {{name}}
     E-Mail: {{email}}
 
-    Nachricht:
+    Message:
     {{message}}

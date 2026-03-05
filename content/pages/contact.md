@@ -1,6 +1,6 @@
 ---
-title: Kontakt
-excerpt: Schreib uns direkt ueber das integrierte Formular.
+title: Contact
+excerpt: Send us a message directly via the integrated form.
 ---
 
-Nutze das Formular, um uns eine Anfrage zu schicken.
+Use the form to send us an enquiry.

@@ -1,12 +1,12 @@
-- label: Start
+- label: Home
   url: /
-- label: Ueber
+- label: About
   url: /about
 - label: Blog
   url: /blog
 - label: Shop
   url: /shop
-- label: Tabellen
+- label: Tables
   url: /tables
-- label: Kontakt
+- label: Contact
   url: /contact

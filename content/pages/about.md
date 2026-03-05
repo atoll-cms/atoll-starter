@@ -1,6 +1,6 @@
 ---
-title: Ueber atoll-cms
-excerpt: Das Projekt verbindet die Starken von Kirby, Astro und WordPress.
+title: About atoll-cms
+excerpt: The project combines the strengths of Kirby, Astro and WordPress.
 ---
 
-atoll-cms wurde fuer Freelancer und Agenturen entwickelt, die schnelle, sichere und wartbare Kundenprojekte auf klassischem PHP-Hosting umsetzen wollen.
+atoll-cms was built for freelancers and agencies who want to deliver fast, secure and maintainable client projects on classic PHP hosting.

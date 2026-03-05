@@ -1,8 +1,8 @@
 ---
 title: Studio
-excerpt: Wer wir sind und wie wir arbeiten.
+excerpt: Who we are and how we work.
 ---
 
-Wir sind ein kleines Team aus Design und Entwicklung mit Fokus auf performante Marketing- und Produktseiten.
+We are a small team of designers and developers focused on performant marketing and product pages.
 
-Unsere Arbeitsweise: kurze Iterationen, fruehes Testing, spaete Komplexitaet.
+Our approach: short iterations, early testing, late complexity.

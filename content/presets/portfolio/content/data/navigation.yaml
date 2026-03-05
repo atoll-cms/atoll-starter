@@ -1,8 +1,8 @@
-- label: Start
+- label: Home
   url: /
 - label: Studio
   url: /about
 - label: Cases
   url: /blog
-- label: Kontakt
+- label: Contact
   url: /contact

@@ -1,11 +1,11 @@
 ---
-title: Willkommen bei atoll-cms
-excerpt: atoll-cms verbindet Flat-File, Islands und ein integriertes Admin-Panel.
+title: Welcome to atoll-cms
+excerpt: atoll-cms combines flat-file, islands and an integrated admin panel.
 ---
 
-atoll-cms ist ein modernes PHP-CMS mit Astro-inspirierter Architektur:
+atoll-cms is a modern PHP CMS with Astro-inspired architecture:
 
 - Zero JavaScript by default
-- Islands fuer gezielte Interaktivitaet
-- Markdown + YAML Content Collections
-- Plugin-System und Admin-Panel
+- Islands for targeted interactivity
+- Markdown + YAML content collections
+- Plugin system and admin panel

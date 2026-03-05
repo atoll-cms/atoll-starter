@@ -1,12 +1,12 @@
 ---
-title: Tabellen
-excerpt: "Demo fuer das tables Plugin mit Sortierung, Filter und Pagination."
+title: Tables
+excerpt: "Demo for the tables plugin with sorting, filtering and pagination."
 ---
 
-Diese Seite zeigt das offizielle **tables** Plugin.
+This page demonstrates the official **tables** plugin.
 
-- Klick auf einen Tabellenkopf sortiert.
-- Das Suchfeld filtert alle Zeilen.
-- Die Pagination begrenzt die Anzahl sichtbarer Eintraege.
+- Clicking a column header sorts the table.
+- The search field filters all rows.
+- Pagination limits the number of visible entries.
 
-Die Interaktivitaet wird als Island nur dort geladen, wo sie gebraucht wird.
+Interactivity is loaded as an island only where it is needed.

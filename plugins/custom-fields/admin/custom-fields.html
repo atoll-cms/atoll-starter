@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Custom Fields</title>
+    <style>
+      :root {
+        --bg: #0b1416;
+        --surface: #111f23;
+        --surface-2: #192c31;
+        --line: #243a40;
+        --text: #ecf2f0;
+        --muted: #8aa3a8;
+        --brand: #f59e0b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 1rem;
+        font: 14px/1.45 Outfit, -apple-system, BlinkMacSystemFont, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        margin-bottom: 1rem;
+      }
+      .card h2 {
+        margin: 0;
+        padding: 0.9rem 1rem;
+        border-bottom: 1px solid var(--line);
+        font-size: 0.95rem;
+      }
+      .body { padding: 1rem; }
+      .row { display: grid; grid-template-columns: 200px 1fr; gap: 0.8rem; margin-bottom: 0.65rem; align-items: center; }
+      .row label { color: var(--muted); font-size: 0.8rem; }
+      input, select, textarea {
+        width: 100%;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--surface-2);
+        color: var(--text);
+        padding: 0.45rem 0.55rem;
+        font: inherit;
+      }
+      .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.9rem; }
+      button {
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--surface-2);
+        color: var(--text);
+        padding: 0.45rem 0.75rem;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--brand);
+        border-color: #fbbf24;
+        color: #0b1416;
+        font-weight: 600;
+      }
+      table { width: 100%; border-collapse: collapse; }
+      th, td {
+        border-bottom: 1px solid var(--line);
+        padding: 0.45rem;
+        text-align: left;
+        vertical-align: top;
+      }
+      th { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+      .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      .notice { padding: 0.55rem 0.65rem; border-radius: 8px; margin-bottom: 0.8rem; border: 1px solid var(--line); }
+      .notice.ok { background: rgba(34, 197, 94, 0.1); border-color: rgba(34, 197, 94, 0.4); color: #86efac; }
+      .notice.err { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.4); color: #fda4af; }
+      .stack { display: grid; gap: 0.35rem; }
+      .inline { display: flex; gap: 0.45rem; align-items: center; }
+      .inline input[type="checkbox"] { width: auto; }
+      .empty { color: var(--muted); padding: 0.6rem 0; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Custom Fields</h2>
+      <div class="body">
+        <div id="notice"></div>
+        <div class="toolbar">
+          <label for="collection">Collection:</label>
+          <select id="collection"></select>
+          <button id="reload" type="button">Neu laden</button>
+          <button id="save" class="primary" type="button">Schema speichern</button>
+        </div>
+
+        <div class="row">
+          <label for="slug_from">slug_from</label>
+          <input id="slug_from" class="mono" placeholder="filename">
+        </div>
+        <div class="row">
+          <label for="sort">sort</label>
+          <input id="sort" class="mono" placeholder="date desc">
+        </div>
+        <div class="row">
+          <label for="per_page">per_page</label>
+          <input id="per_page" type="number" min="1" step="1">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Schema-Felder</h2>
+      <div class="body">
+        <div class="toolbar">
+          <button id="add-field" type="button">Feld hinzufuegen</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Typ</th>
+              <th>Regeln</th>
+              <th>Default</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="fields-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <script defer src="/plugins/custom-fields/admin/custom-fields.js"></script>
+  </body>
+</html>

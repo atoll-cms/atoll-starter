@@ -165,6 +165,48 @@ final class ContentRepository
         return is_array($parsed) ? $parsed : [];
     }
 
+    /**
+     * @param array<string, mixed> $meta
+     */
+    public function saveCollectionMeta(string $collection, array $meta): string
+    {
+        $collection = trim($collection, '/');
+        if ($collection === '') {
+            throw new ValidationException(['collection' => 'required'], 'Collection is required');
+        }
+
+        $dir = $this->contentRoot . '/' . $collection;
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        $schema = $meta['schema'] ?? [];
+        if (!is_array($schema)) {
+            throw new ValidationException(['schema' => 'schema_must_be_object'], 'Schema must be an object');
+        }
+
+        $normalizedSchema = [];
+        foreach ($schema as $field => $rules) {
+            if (!is_string($field) || trim($field) === '') {
+                continue;
+            }
+            if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $field)) {
+                throw new ValidationException(['schema.' . $field => 'invalid_field_name'], 'Invalid schema field name');
+            }
+            if (!is_array($rules)) {
+                throw new ValidationException(['schema.' . $field => 'rules_must_be_object'], 'Schema rules must be objects');
+            }
+            $normalizedSchema[$field] = $rules;
+        }
+
+        $meta['schema'] = $normalizedSchema;
+
+        $file = $dir . '/_collection.yaml';
+        file_put_contents($file, Yaml::dump($meta));
+
+        return $file;
+    }
+
     /** @return array<string, mixed> */
     public function readDataFile(string $name): array
     {
@@ -532,6 +574,36 @@ final class ContentRepository
             $maxLength = isset($rules['max_length']) ? (int) $rules['max_length'] : 0;
             if ($maxLength > 0 && is_string($value) && mb_strlen($value) > $maxLength) {
                 $errors[$field] = 'max_length_exceeded:' . $maxLength;
+                continue;
+            }
+
+            if ($type === 'number' || $type === 'integer') {
+                $number = is_int($value) || is_float($value) ? (float) $value : (is_string($value) && is_numeric($value) ? (float) $value : null);
+                if ($number !== null) {
+                    if (array_key_exists('min', $rules) && $number < (float) $rules['min']) {
+                        $errors[$field] = 'min_value_not_met:' . (string) $rules['min'];
+                        continue;
+                    }
+                    if (array_key_exists('max', $rules) && $number > (float) $rules['max']) {
+                        $errors[$field] = 'max_value_exceeded:' . (string) $rules['max'];
+                        continue;
+                    }
+                }
+            }
+
+            if (is_array($value)) {
+                $minItems = isset($rules['min_items']) ? (int) $rules['min_items'] : 0;
+                $maxItems = isset($rules['max_items']) ? (int) $rules['max_items'] : 0;
+                $count = count($value);
+
+                if ($minItems > 0 && $count < $minItems) {
+                    $errors[$field] = 'min_items_not_met:' . $minItems;
+                    continue;
+                }
+                if ($maxItems > 0 && $count > $maxItems) {
+                    $errors[$field] = 'max_items_exceeded:' . $maxItems;
+                    continue;
+                }
             }
         }
 
@@ -550,6 +622,12 @@ final class ContentRepository
             'date' => is_string($value) && strtotime($value) !== false,
             'boolean' => is_bool($value),
             'image' => is_string($value) && str_starts_with($value, '/'),
+            'number' => is_int($value) || is_float($value),
+            'integer' => is_int($value),
+            'json' => is_array($value),
+            'repeater' => $this->matchesRepeaterType($value),
+            'flexible' => $this->matchesFlexibleType($value),
+            'relation' => $this->matchesListType($value, 'string'),
             'list' => $this->matchesListType($value, (string) ($rules['of'] ?? 'string')),
             default => true,
         };
@@ -563,6 +641,40 @@ final class ContentRepository
 
         foreach ($value as $item) {
             if ($of === 'string' && !is_string($item)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function matchesRepeaterType(mixed $value): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if (!is_array($item)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function matchesFlexibleType(mixed $value): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if (!is_array($item)) {
+                return false;
+            }
+            $type = $item['type'] ?? null;
+            if (!is_string($type) || trim($type) === '') {
                 return false;
             }
         }

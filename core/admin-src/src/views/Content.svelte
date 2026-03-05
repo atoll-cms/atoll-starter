@@ -13,6 +13,19 @@
   let seoSnippetTitle = $state('');
   let seoSnippetUrl = $state('');
   let seoSnippetDescription = $state('');
+  let collectionMeta = $state({});
+  let schemaErrorByField = $state({});
+  let showFrontmatterAdvanced = $state(false);
+
+  const SYSTEM_FIELDS = new Set([
+    'title',
+    'slug',
+    'excerpt',
+    'seo_title',
+    'seo_description',
+    'seo_image',
+    'draft'
+  ]);
 
   $effect(() => {
     if ($currentEntry) {
@@ -203,12 +216,28 @@
   async function selectCollection(event) {
     currentCollection.set(event.target.value);
     await loadEntries();
+    await loadCollectionMeta();
   }
 
   async function loadEntries() {
     const data = await api(`/admin/api/entries?collection=${encodeURIComponent($currentCollection)}`);
     entries.set(data.entries);
     currentEntry.set(null);
+  }
+
+  async function loadCollectionMeta() {
+    const collection = String($currentCollection || '').trim();
+    if (!collection) {
+      collectionMeta = {};
+      return;
+    }
+
+    try {
+      const data = await api(`/admin/api/collection/meta?collection=${encodeURIComponent(collection)}`);
+      collectionMeta = data.meta || {};
+    } catch {
+      collectionMeta = {};
+    }
   }
 
   async function selectEntry(id) {
@@ -220,6 +249,7 @@
   async function saveEntry(event) {
     event.preventDefault();
     saving = true;
+    schemaErrorByField = {};
 
     let frontmatter;
     try {
@@ -228,6 +258,10 @@
       addToast('Frontmatter JSON ist ungueltig.', 'error');
       saving = false;
       return;
+    }
+
+    if (editorTitle.trim() !== '') {
+      frontmatter.title = editorTitle.trim();
     }
 
     try {
@@ -244,13 +278,150 @@
 
       addToast('Eintrag gespeichert.', 'success');
       await loadEntries();
+      await loadCollectionMeta();
       await selectEntry($currentEntryId);
     } catch (err) {
-      addToast(err.message, 'error');
+      const message = err?.message || 'Speichern fehlgeschlagen.';
+      if (err?.fields && typeof err.fields === 'object') {
+        schemaErrorByField = err.fields;
+      }
+      addToast(message, 'error');
     } finally {
       saving = false;
     }
   }
+
+  function schemaEntries() {
+    const schema = collectionMeta?.schema;
+    if (!schema || typeof schema !== 'object') {
+      return [];
+    }
+
+    return Object.entries(schema)
+      .filter(([name, rules]) => {
+        if (!name || SYSTEM_FIELDS.has(name)) return false;
+        return rules && typeof rules === 'object';
+      })
+      .sort(([a], [b]) => a.localeCompare(b));
+  }
+
+  function fieldType(rules) {
+    return String(rules?.type || 'string').toLowerCase();
+  }
+
+  function fieldHelp(name, rules) {
+    const parts = [];
+    if (rules?.required) parts.push('Pflichtfeld');
+    if (rules?.max_length) parts.push(`max ${rules.max_length} Zeichen`);
+    if (rules?.min_items) parts.push(`min ${rules.min_items} Eintraege`);
+    if (rules?.max_items) parts.push(`max ${rules.max_items} Eintraege`);
+    if (rules?.of) parts.push(`Liste aus ${rules.of}`);
+    if (rules?.collection) parts.push(`Quelle: ${rules.collection}`);
+    if (parts.length === 0) return name;
+    return `${name} · ${parts.join(' · ')}`;
+  }
+
+  function getFrontmatterObject() {
+    return parseFrontmatter(editorFrontmatter);
+  }
+
+  function writeFrontmatterObject(frontmatter) {
+    editorFrontmatter = JSON.stringify(frontmatter, null, 2);
+  }
+
+  function getFieldValue(name, rules) {
+    const frontmatter = getFrontmatterObject();
+    if (Object.prototype.hasOwnProperty.call(frontmatter, name)) {
+      return frontmatter[name];
+    }
+    if (Object.prototype.hasOwnProperty.call(rules || {}, 'default')) {
+      return rules.default;
+    }
+    return null;
+  }
+
+  function setFieldValue(name, rules, rawValue) {
+    const frontmatter = getFrontmatterObject();
+    const type = fieldType(rules);
+    const next = normalizeFieldValue(type, rawValue);
+
+    if (next === null || next === undefined || next === '') {
+      if (rules?.required) {
+        schemaErrorByField = { ...schemaErrorByField, [name]: 'required' };
+      } else {
+        const copy = { ...schemaErrorByField };
+        delete copy[name];
+        schemaErrorByField = copy;
+      }
+      delete frontmatter[name];
+      writeFrontmatterObject(frontmatter);
+      return;
+    }
+
+    const copy = { ...schemaErrorByField };
+    delete copy[name];
+    schemaErrorByField = copy;
+
+    frontmatter[name] = next;
+    writeFrontmatterObject(frontmatter);
+  }
+
+  function setFieldFromJson(name, rules, value) {
+    const raw = String(value || '').trim();
+    if (raw === '') {
+      setFieldValue(name, rules, null);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      setFieldValue(name, rules, parsed);
+    } catch {
+      schemaErrorByField = { ...schemaErrorByField, [name]: 'invalid_json' };
+      addToast(`Ungueltiges JSON im Feld "${name}".`, 'error');
+    }
+  }
+
+  function normalizeFieldValue(type, rawValue) {
+    switch (type) {
+      case 'boolean':
+        return !!rawValue;
+      case 'number':
+        if (rawValue === '' || rawValue === null) return null;
+        return Number(rawValue);
+      case 'integer':
+        if (rawValue === '' || rawValue === null) return null;
+        return parseInt(rawValue, 10);
+      case 'date':
+      case 'image':
+      case 'text':
+      case 'string':
+        return String(rawValue ?? '').trim();
+      case 'list':
+      case 'relation': {
+        if (Array.isArray(rawValue)) {
+          return rawValue.map((v) => String(v).trim()).filter(Boolean);
+        }
+        return String(rawValue ?? '')
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean);
+      }
+      case 'json':
+        return typeof rawValue === 'object' ? rawValue : {};
+      case 'repeater':
+      case 'flexible':
+        return Array.isArray(rawValue) ? rawValue : [];
+      default:
+        return rawValue;
+    }
+  }
+
+  $effect(() => {
+    if ($currentCollection) {
+      loadCollectionMeta().catch(() => {});
+    }
+  });
 
   function parseFrontmatter(json) {
     try {
@@ -381,14 +552,87 @@
 
           <div class="editor-split" class:with-preview={showPreview}>
             <div class="editor-panes">
+              {#if schemaEntries().length > 0}
+                <div class="pane pane--fields">
+                  <div class="pane-label">Custom Fields ({schemaEntries().length})</div>
+                  <div class="fields-grid">
+                    {#each schemaEntries() as [name, rules]}
+                      {@const type = fieldType(rules)}
+                      {@const value = getFieldValue(name, rules)}
+                      <label class="field">
+                        <span class="field__label">{name}</span>
+                        <span class="field__meta">{fieldHelp(name, rules)}</span>
+
+                        {#if type === 'boolean'}
+                          <input
+                            type="checkbox"
+                            checked={!!value}
+                            onchange={(event) => setFieldValue(name, rules, event.currentTarget?.checked)}
+                          >
+                        {:else if type === 'text'}
+                          <textarea
+                            rows="3"
+                            value={String(value ?? '')}
+                            oninput={(event) => setFieldValue(name, rules, event.currentTarget?.value)}
+                          ></textarea>
+                        {:else if type === 'date'}
+                          <input
+                            type="date"
+                            value={String(value ?? '')}
+                            oninput={(event) => setFieldValue(name, rules, event.currentTarget?.value)}
+                          >
+                        {:else if type === 'number' || type === 'integer'}
+                          <input
+                            type="number"
+                            value={value ?? ''}
+                            step={type === 'integer' ? '1' : 'any'}
+                            oninput={(event) => setFieldValue(name, rules, event.currentTarget?.value)}
+                          >
+                        {:else if type === 'list' || type === 'relation'}
+                          <input
+                            type="text"
+                            value={Array.isArray(value) ? value.join(', ') : String(value ?? '')}
+                            placeholder="wert-1, wert-2"
+                            oninput={(event) => setFieldValue(name, rules, event.currentTarget?.value)}
+                          >
+                        {:else if type === 'json' || type === 'repeater' || type === 'flexible'}
+                          <textarea
+                            rows="4"
+                            value={JSON.stringify(value ?? (type === 'json' ? {} : []), null, 2)}
+                            onblur={(event) => setFieldFromJson(name, rules, event.currentTarget?.value)}
+                          ></textarea>
+                        {:else}
+                          <input
+                            type="text"
+                            value={String(value ?? '')}
+                            oninput={(event) => setFieldValue(name, rules, event.currentTarget?.value)}
+                          >
+                        {/if}
+
+                        {#if schemaErrorByField[name]}
+                          <span class="field__error">{schemaErrorByField[name]}</span>
+                        {/if}
+                      </label>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+
               <div class="pane">
-                <div class="pane-label">Frontmatter (JSON)</div>
-                <textarea
-                  class="code-editor"
-                  bind:value={editorFrontmatter}
-                  rows="8"
-                  spellcheck="false"
-                ></textarea>
+                <div class="pane-label pane-label--row">
+                  <span>Frontmatter (JSON)</span>
+                  <button type="button" class="json-toggle" onclick={() => showFrontmatterAdvanced = !showFrontmatterAdvanced}>
+                    {showFrontmatterAdvanced ? 'Ausblenden' : 'Anzeigen'}
+                  </button>
+                </div>
+                {#if showFrontmatterAdvanced}
+                  <textarea
+                    class="code-editor"
+                    bind:value={editorFrontmatter}
+                    rows="8"
+                    spellcheck="false"
+                  ></textarea>
+                {/if}
               </div>
               <div class="pane pane--markdown">
                 <div class="pane-label">Markdown</div>
@@ -789,6 +1033,63 @@
     flex-direction: column;
   }
 
+  .pane--fields {
+    border-bottom: 1px solid var(--line);
+    background: rgba(8, 20, 24, 0.35);
+  }
+
+  .fields-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(8, 20, 24, 0.55);
+  }
+
+  .field__label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .field__meta {
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+
+  .field input[type='text'],
+  .field input[type='date'],
+  .field input[type='number'],
+  .field textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 0.45rem 0.55rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+  }
+
+  .field input[type='checkbox'] {
+    width: 16px;
+    height: 16px;
+  }
+
+  .field__error {
+    color: #fda4af;
+    font-size: 0.72rem;
+  }
+
   .pane--markdown {
     flex: 1;
     min-height: 0;
@@ -805,6 +1106,30 @@
     background: var(--bg);
     border-bottom: 1px solid var(--line);
     flex-shrink: 0;
+  }
+
+  .pane-label--row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .json-toggle {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.68rem;
+    text-transform: none;
+    letter-spacing: 0;
+    padding: 0.15rem 0.5rem;
+    cursor: pointer;
+  }
+
+  .json-toggle:hover {
+    color: var(--text);
+    border-color: var(--brand);
   }
 
   .code-editor {

@@ -121,6 +121,8 @@ final class AdminController
                 'ok' => true,
                 'collections' => $this->content->collections(),
             ]),
+            $endpoint === '/collection/meta' && $request->method === 'GET' => $this->collectionMeta($request),
+            $endpoint === '/collection/meta/save' && $request->method === 'POST' => $this->saveCollectionMeta($request),
             $endpoint === '/entries' && $request->method === 'GET' => $this->entries($request),
             $endpoint === '/entry' && $request->method === 'GET' => $this->entry($request),
             $endpoint === '/entry/save' && $request->method === 'POST' => $this->saveEntry($request),
@@ -289,8 +291,55 @@ final class AdminController
             return Response::json(['error' => 'frontmatter must be object'], 422);
         }
 
+        $savePayload = [
+            'collection' => $collection,
+            'id' => $id,
+            'frontmatter' => $frontmatter,
+            'markdown' => $markdown,
+            'user' => $this->security->currentUser(),
+        ];
+        $hookErrors = [];
+
+        foreach ($this->hooks->run('admin:entry:before_save', $savePayload, $request) as $result) {
+            if (!is_array($result)) {
+                continue;
+            }
+
+            $nextFrontmatter = $result['frontmatter'] ?? null;
+            if (is_array($nextFrontmatter)) {
+                $savePayload['frontmatter'] = $nextFrontmatter;
+            }
+
+            $nextMarkdown = $result['markdown'] ?? null;
+            if (is_string($nextMarkdown)) {
+                $savePayload['markdown'] = $nextMarkdown;
+            }
+
+            $errors = $result['errors'] ?? null;
+            if (is_array($errors)) {
+                foreach ($errors as $field => $message) {
+                    if (!is_string($field) || trim($field) === '') {
+                        continue;
+                    }
+                    $hookErrors[$field] = is_string($message) ? $message : 'invalid';
+                }
+            }
+        }
+
+        if ($hookErrors !== []) {
+            return Response::json([
+                'error' => 'Validation failed',
+                'fields' => $hookErrors,
+            ], 422);
+        }
+
         try {
-            $file = $this->content->save($collection, $id, $frontmatter, $markdown);
+            $file = $this->content->save(
+                (string) $savePayload['collection'],
+                (string) $savePayload['id'],
+                (array) $savePayload['frontmatter'],
+                (string) $savePayload['markdown']
+            );
         } catch (ValidationException $e) {
             return Response::json([
                 'error' => $e->getMessage(),
@@ -300,6 +349,58 @@ final class AdminController
         $this->cache->invalidateByDependencies([$file]);
 
         return Response::json(['ok' => true, 'file' => $file]);
+    }
+
+    private function collectionMeta(Request $request): Response
+    {
+        $collection = trim((string) $request->input('collection', 'pages'));
+        if ($collection === '') {
+            return Response::json(['error' => 'Missing collection'], 422);
+        }
+
+        return Response::json([
+            'ok' => true,
+            'collection' => $collection,
+            'meta' => $this->content->collectionMeta($collection),
+        ]);
+    }
+
+    private function saveCollectionMeta(Request $request): Response
+    {
+        $payload = $request->isJson() ? $request->json() : $request->post;
+        $collection = trim((string) ($payload['collection'] ?? ''));
+        $meta = $payload['meta'] ?? null;
+
+        if ($collection === '') {
+            return Response::json(['error' => 'Missing collection'], 422);
+        }
+        if (!is_array($meta)) {
+            return Response::json(['error' => 'meta must be object'], 422);
+        }
+
+        try {
+            $file = $this->content->saveCollectionMeta($collection, $meta);
+        } catch (ValidationException $e) {
+            return Response::json([
+                'error' => $e->getMessage(),
+                'fields' => $e->errors(),
+            ], 422);
+        }
+
+        $this->cache->clear();
+
+        $this->security->recordAudit('content.collection_meta_save', [
+            'user' => $this->security->currentUser(),
+            'collection' => $collection,
+            'file' => $file,
+        ]);
+
+        return Response::json([
+            'ok' => true,
+            'collection' => $collection,
+            'file' => $file,
+            'meta' => $this->content->collectionMeta($collection),
+        ]);
     }
 
     private function deleteEntry(Request $request): Response

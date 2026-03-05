@@ -20,7 +20,14 @@ export async function api(url, options = {}) {
 
   if (!response.ok) {
     const message = data.error || `Request failed (${response.status})`;
-    throw new Error(message);
+    const error = new Error(message);
+    if (data && typeof data === 'object') {
+      error.payload = data;
+      if (data.fields && typeof data.fields === 'object') {
+        error.fields = data.fields;
+      }
+    }
+    throw error;
   }
 
   return data;

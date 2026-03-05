@@ -17,7 +17,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: mbstring, json, gd, openssl, zip
+          extensions: mbstring, json, gd, openssl, zip, pdo_sqlite, sqlite3
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -50,7 +50,7 @@ jobs:
         run: |
           php -S 127.0.0.1:8088 -t . index.php >/tmp/server.log 2>&1 &
           pid=$!
+          trap 'kill $pid >/dev/null 2>&1 || true' EXIT
           sleep 1
-          curl -fsS http://127.0.0.1:8088/ >/tmp/home.html
-          curl -fsS http://127.0.0.1:8088/admin >/tmp/admin.html
-          kill $pid
+          curl -fsS http://127.0.0.1:8088/ >/tmp/home.html || { cat /tmp/server.log; exit 1; }
+          curl -fsS http://127.0.0.1:8088/admin >/tmp/admin.html || { cat /tmp/server.log; exit 1; }

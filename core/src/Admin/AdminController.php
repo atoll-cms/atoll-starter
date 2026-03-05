@@ -130,6 +130,7 @@ final class AdminController
             $endpoint === '/backup/create' && $request->method === 'POST' => $this->createBackup(),
             $endpoint === '/plugins' && $request->method === 'GET' => Response::json(['ok' => true, 'plugins' => $this->plugins->list()]),
             $endpoint === '/plugin-registry' && $request->method === 'GET' => $this->pluginRegistry(),
+            $endpoint === '/plugin-page' && $request->method === 'GET' => $this->pluginPage($request),
             $endpoint === '/theme-registry' && $request->method === 'GET' => $this->themeRegistry(),
             $endpoint === '/plugins/toggle' && $request->method === 'POST' => $this->togglePlugin($request),
             $endpoint === '/plugins/install' && $request->method === 'POST' => $this->installPlugin($request),
@@ -501,6 +502,33 @@ final class AdminController
         return Response::json([
             'ok' => true,
             'registry' => $registry,
+        ]);
+    }
+
+    private function pluginPage(Request $request): Response
+    {
+        $view = trim((string) $request->input('view', ''));
+        if ($view === '') {
+            return Response::json(['error' => 'Missing plugin view id'], 422);
+        }
+
+        $page = $this->plugins->adminPage($view);
+        if ($page === null) {
+            return Response::json(['error' => 'Plugin admin page not found'], 404);
+        }
+
+        $raw = (string) $request->input('raw', '0');
+        if (in_array(strtolower($raw), ['1', 'true', 'yes'], true)) {
+            return Response::text((string) file_get_contents($page['path']))
+                ->withHeader('Content-Type', 'text/html; charset=UTF-8');
+        }
+
+        return Response::json([
+            'ok' => true,
+            'view' => $view,
+            'plugin' => $page['plugin'],
+            'title' => $page['title'],
+            'url' => '/admin/api/plugin-page?view=' . rawurlencode($view) . '&raw=1',
         ]);
     }
 

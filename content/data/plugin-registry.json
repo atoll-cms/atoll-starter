@@ -45,6 +45,15 @@
     "price_eur": 0
   },
   {
+    "id": "visual-editor",
+    "name": "Visual Editor",
+    "type": "official",
+    "description": "Block-style markdown editor bridge with admin UI and parse/render endpoints.",
+    "source": "plugins/visual-editor",
+    "seller": "atoll-cms",
+    "price_eur": 0
+  },
+  {
     "id": "booking-pro",
     "name": "Booking Pro",
     "type": "marketplace",

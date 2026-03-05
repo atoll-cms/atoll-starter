@@ -277,6 +277,7 @@ Plugin installieren:
 php bin/atoll plugin:install /pfad/zum/plugin --enable
 php bin/atoll plugin:install:registry i18n --enable
 php bin/atoll plugin:install:registry tables --enable
+php bin/atoll plugin:install:registry visual-editor --enable
 php bin/atoll plugin:install:registry booking-pro --enable --license=YOUR_KEY
 php bin/atoll plugin:list
 ```
@@ -369,6 +370,7 @@ php bin/atoll plugin:list
 php bin/atoll plugin:install /path/to/plugin --enable
 php bin/atoll plugin:install:registry i18n --enable
 php bin/atoll plugin:install:registry tables --enable
+php bin/atoll plugin:install:registry visual-editor --enable
 php bin/atoll plugin:install:registry booking-pro --enable --license=YOUR_KEY
 php bin/atoll theme:list
 php bin/atoll theme:activate business

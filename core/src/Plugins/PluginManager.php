@@ -20,6 +20,9 @@ final class PluginManager
     /** @var array<string, string> */
     private array $islands = [];
 
+    /** @var array<string, array{plugin:string,title:string,path:string}> */
+    private array $adminPages = [];
+
     /** @var array<string, bool> */
     private array $state = [];
 
@@ -77,6 +80,28 @@ final class PluginManager
                 $path = rtrim($dir, '/') . '/' . ltrim((string) $relativePath, '/');
                 $publicPath = str_replace($this->pluginsDir, '/plugins', $path);
                 $this->islands[(string) $name] = $publicPath;
+            }
+
+            foreach (($manifest['admin_pages'] ?? []) as $viewId => $relativePath) {
+                if (!is_string($viewId) || !is_string($relativePath)) {
+                    continue;
+                }
+
+                $normalizedView = trim($viewId);
+                if ($normalizedView === '') {
+                    continue;
+                }
+
+                $path = rtrim($dir, '/') . '/' . ltrim($relativePath, '/');
+                if (!is_file($path)) {
+                    continue;
+                }
+
+                $this->adminPages[$normalizedView] = [
+                    'plugin' => $id,
+                    'title' => (string) ($manifest['name'] ?? $id),
+                    'path' => $path,
+                ];
             }
         }
     }
@@ -140,6 +165,17 @@ final class PluginManager
     public function islandMap(): array
     {
         return $this->islands;
+    }
+
+    /** @return array{plugin:string,title:string,path:string}|null */
+    public function adminPage(string $viewId): ?array
+    {
+        $viewId = trim($viewId);
+        if ($viewId === '') {
+            return null;
+        }
+
+        return $this->adminPages[$viewId] ?? null;
     }
 
     /** @return array<string, bool> */

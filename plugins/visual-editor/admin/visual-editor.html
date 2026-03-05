@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Visual Editor</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+
+      body {
+        margin: 0;
+        padding: 1rem;
+        background: #f6f8fb;
+        color: #0f172a;
+      }
+
+      .page {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0 0 0.3rem;
+        font-size: 1.45rem;
+        letter-spacing: -0.02em;
+      }
+
+      p {
+        margin: 0;
+        color: #556074;
+      }
+
+      .grid {
+        margin-top: 1rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.9rem;
+      }
+
+      .card {
+        background: #ffffff;
+        border: 1px solid #d8dee9;
+        border-radius: 12px;
+        padding: 0.8rem;
+      }
+
+      .card h2 {
+        margin: 0 0 0.6rem;
+        font-size: 1rem;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 320px;
+        border: 1px solid #c9d2e1;
+        border-radius: 10px;
+        padding: 0.7rem;
+        resize: vertical;
+        font: 0.9rem/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, 'Courier New', monospace;
+      }
+
+      .controls {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 0.7rem;
+      }
+
+      button {
+        border: 0;
+        border-radius: 8px;
+        padding: 0.5rem 0.8rem;
+        font: inherit;
+        cursor: pointer;
+        background: #1d4ed8;
+        color: #fff;
+      }
+
+      button.secondary {
+        background: #334155;
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .meta {
+        margin-top: 0.7rem;
+        font-size: 0.84rem;
+        color: #475569;
+      }
+
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <h1>Visual Editor (Beta)</h1>
+      <p>Konvertiert Markdown in strukturierte Blocks und zurueck. Dient als Bruecke fuer einen spaeteren Block-Editor.</p>
+
+      <div class="grid">
+        <section class="card">
+          <h2>Markdown</h2>
+          <textarea id="markdown"># Hallo Atoll
+
+Das ist ein Demo-Text fuer den Visual Editor.
+
+- Punkt 1
+- Punkt 2
+
+> Ein Zitat fuer die Vorschau.
+
+```php
+echo "atoll";
+```
+</textarea>
+          <div class="controls">
+            <button id="parse">Markdown -> Blocks</button>
+          </div>
+          <div class="meta" id="leftMeta"></div>
+        </section>
+
+        <section class="card">
+          <h2>Blocks (JSON)</h2>
+          <textarea id="blocks">[]</textarea>
+          <div class="controls">
+            <button id="render">Blocks -> Markdown</button>
+            <button class="secondary" id="format">JSON formatieren</button>
+          </div>
+          <div class="meta" id="rightMeta"></div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const markdownEl = document.getElementById('markdown');
+      const blocksEl = document.getElementById('blocks');
+      const leftMeta = document.getElementById('leftMeta');
+      const rightMeta = document.getElementById('rightMeta');
+      const parseBtn = document.getElementById('parse');
+      const renderBtn = document.getElementById('render');
+      const formatBtn = document.getElementById('format');
+
+      const setBusy = (busy) => {
+        parseBtn.disabled = busy;
+        renderBtn.disabled = busy;
+        formatBtn.disabled = busy;
+      };
+
+      const parseJson = () => {
+        try {
+          const value = JSON.parse(blocksEl.value || '[]');
+          if (!Array.isArray(value)) throw new Error('Blocks muss ein Array sein.');
+          return value;
+        } catch (err) {
+          throw new Error('Ungueltiges JSON: ' + err.message);
+        }
+      };
+
+      parseBtn.addEventListener('click', async () => {
+        setBusy(true);
+        leftMeta.textContent = '';
+        try {
+          const res = await fetch('/visual-editor/blocks/parse', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ markdown: markdownEl.value || '' })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+          blocksEl.value = JSON.stringify(data.blocks || [], null, 2);
+          leftMeta.textContent = `Parsed: ${(data.blocks || []).length} Block(s)`;
+        } catch (err) {
+          leftMeta.textContent = err.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      renderBtn.addEventListener('click', async () => {
+        setBusy(true);
+        rightMeta.textContent = '';
+        try {
+          const blocks = parseJson();
+          const res = await fetch('/visual-editor/blocks/render', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ blocks })
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+          markdownEl.value = data.markdown || '';
+          rightMeta.textContent = `Rendered: ${blocks.length} Block(s)`;
+        } catch (err) {
+          rightMeta.textContent = err.message;
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      formatBtn.addEventListener('click', () => {
+        try {
+          blocksEl.value = JSON.stringify(parseJson(), null, 2);
+          rightMeta.textContent = 'JSON formatiert.';
+        } catch (err) {
+          rightMeta.textContent = err.message;
+        }
+      });
+    </script>
+  </body>
+</html>

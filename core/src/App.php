@@ -39,10 +39,7 @@ final class App
             $this->config['base_url'] = trim($envBaseUrl);
         }
 
-        $configuredCorePath = Config::get($this->config, 'core.path');
-        $this->coreRoot = is_string($configuredCorePath) && $configuredCorePath !== ''
-            ? $this->normalizeCorePath($configuredCorePath)
-            : $this->root . '/core';
+        $this->coreRoot = $this->resolveCoreRoot(Config::get($this->config, 'core.path'));
 
         $timezone = Config::get($this->config, 'timezone');
         if (is_string($timezone) && $timezone !== '') {
@@ -297,11 +294,26 @@ final class App
 
     private function normalizeCorePath(string $path): string
     {
-        if (str_starts_with($path, '/')) {
-            return rtrim($path, '/');
+        if (str_starts_with($path, '/') || preg_match('/^[A-Za-z]:[\\\\\\/]/', $path) === 1) {
+            return rtrim(str_replace('\\', '/', $path), '/');
         }
 
         return rtrim($this->root . '/' . ltrim($path, '/'), '/');
+    }
+
+    private function resolveCoreRoot(mixed $configuredCorePath): string
+    {
+        $bundled = rtrim($this->root . '/core', '/');
+        if (!is_string($configuredCorePath) || trim($configuredCorePath) === '') {
+            return $bundled;
+        }
+
+        $candidate = $this->normalizeCorePath(trim($configuredCorePath));
+        if (is_file($candidate . '/src/bootstrap.php')) {
+            return $candidate;
+        }
+
+        return $bundled;
     }
 
     private function basePath(): string

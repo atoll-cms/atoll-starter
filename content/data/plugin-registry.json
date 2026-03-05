@@ -36,6 +36,15 @@
     "price_eur": 0
   },
   {
+    "id": "tables",
+    "name": "Tables",
+    "type": "official",
+    "description": "Sortable and filterable data tables with CSV helper endpoint.",
+    "source": "plugins/tables",
+    "seller": "atoll-cms",
+    "price_eur": 0
+  },
+  {
     "id": "booking-pro",
     "name": "Booking Pro",
     "type": "marketplace",

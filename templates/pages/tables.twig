@@ -1,0 +1,43 @@
+{% extends 'layouts/base.twig' %}
+
+{% block content %}
+  <h1>{{ page.title }}</h1>
+  <article class="prose">{{ page.content|raw }}</article>
+
+  <section class="prose">
+    <table class="js-demo-table">
+      <thead>
+        <tr>
+          <th>Projekt</th>
+          <th>Typ</th>
+          <th>Leads</th>
+          <th>Umsatz (EUR)</th>
+          <th>Go-Live</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Alpha Motors</td><td>Business</td><td>42</td><td>12800</td><td>2026-01-15</td></tr>
+        <tr><td>Nordlicht Studio</td><td>Portfolio</td><td>17</td><td>6400</td><td>2026-02-10</td></tr>
+        <tr><td>Stadtwerke Sued</td><td>Corporate</td><td>89</td><td>22100</td><td>2025-11-02</td></tr>
+        <tr><td>Berg & Tal</td><td>Shop</td><td>35</td><td>9800</td><td>2026-03-01</td></tr>
+        <tr><td>Klinik am See</td><td>Infoportal</td><td>53</td><td>15400</td><td>2025-09-18</td></tr>
+        <tr><td>Luma Events</td><td>Landingpage</td><td>26</td><td>7100</td><td>2026-02-21</td></tr>
+        <tr><td>Hausbau Pro</td><td>Business</td><td>47</td><td>13250</td><td>2025-12-04</td></tr>
+        <tr><td>Kaffeewerk</td><td>Shop</td><td>33</td><td>8450</td><td>2026-01-29</td></tr>
+        <tr><td>Bike Republic</td><td>Community</td><td>58</td><td>16720</td><td>2025-10-12</td></tr>
+        <tr><td>EduLab</td><td>Docs</td><td>21</td><td>5900</td><td>2026-02-05</td></tr>
+        <tr><td>Atelier M</td><td>Portfolio</td><td>15</td><td>4600</td><td>2025-08-19</td></tr>
+        <tr><td>Fresh Farm</td><td>Shop</td><td>67</td><td>18800</td><td>2026-03-03</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  {{ island('TableEnhancer', {
+    client: 'load',
+    props: {
+      selector: '.js-demo-table',
+      pageSize: 6,
+      searchPlaceholder: 'Nach Projekt oder Typ suchen...'
+    }
+  }) }}
+{% endblock %}

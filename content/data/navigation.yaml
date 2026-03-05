@@ -6,5 +6,7 @@
   url: /blog
 - label: Shop
   url: /shop
+- label: Tabellen
+  url: /tables
 - label: Kontakt
   url: /contact

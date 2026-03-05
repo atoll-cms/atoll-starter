@@ -35,9 +35,10 @@ jobs:
 
       - name: JS syntax check
         run: |
-          node --check core/admin/app.js
           node --check core/assets/js/island-loader.js
-          node --check core/islands/dist/ContactForm.js
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find core/admin/assets core/islands/dist -name '*.js' -type f -print0)
 
       - name: CLI smoke
         run: |

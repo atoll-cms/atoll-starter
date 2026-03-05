@@ -30,6 +30,16 @@
     "price_eur": 0
   },
   {
+    "id": "docs",
+    "name": "Docs Theme",
+    "type": "official",
+    "description": "Official external theme for documentation sites",
+    "preview": "https://raw.githubusercontent.com/atoll-cms/atoll-theme-docs/main/assets/preview.png",
+    "source": "https://github.com/atoll-cms/atoll-theme-docs/archive/refs/heads/main.zip",
+    "seller": "atoll-cms",
+    "price_eur": 0
+  },
+  {
     "id": "studio-pro",
     "name": "Studio Pro Theme",
     "type": "marketplace",

@@ -290,6 +290,7 @@ php bin/atoll theme:install:registry business
 php bin/atoll theme:install:registry studio-pro --license=YOUR_KEY
 php bin/atoll theme:install:registry editorial
 php bin/atoll theme:install:registry portfolio
+php bin/atoll theme:install:registry docs
 php bin/atoll theme:list
 php bin/atoll theme:activate business
 ```
@@ -376,6 +377,7 @@ php bin/atoll theme:list
 php bin/atoll theme:activate business
 php bin/atoll theme:install /path/to/theme
 php bin/atoll theme:install:registry business
+php bin/atoll theme:install:registry docs
 php bin/atoll theme:install:registry studio-pro --license=YOUR_KEY
 php bin/atoll preset:list
 php bin/atoll preset:apply business

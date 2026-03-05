@@ -6,15 +6,58 @@
     {{ page ? seo_meta(page) : '' }}
     {{ hook('head:meta', page, site)|raw }}
     {{ hook('head:scripts', page, site)|raw }}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="{{ theme_asset('main.css') }}">
   </head>
   <body>
+    <a class="skip-to-content" href="#main-content">Zum Inhalt springen</a>
     {{ hook('body:start', page, site)|raw }}
     {% include 'components/header.twig' %}
-    <main class="container">
+    <main id="main-content" class="container">
       {% block content %}{% endblock %}
     </main>
     {% include 'components/footer.twig' %}
     {{ hook('body:end', page, site)|raw }}
+    <script>
+      // Sticky header shadow on scroll
+      const header = document.querySelector('.site-header');
+      if (header) {
+        window.addEventListener('scroll', () => {
+          header.classList.toggle('scrolled', window.scrollY > 10);
+        }, { passive: true });
+      }
+
+      // Mobile navigation toggle
+      const toggle = document.querySelector('.menu-toggle');
+      const nav = document.querySelector('.header-nav');
+      if (toggle && nav) {
+        toggle.addEventListener('click', () => {
+          const expanded = toggle.getAttribute('aria-expanded') === 'true';
+          toggle.setAttribute('aria-expanded', String(!expanded));
+          nav.classList.toggle('is-open', !expanded);
+          document.body.style.overflow = !expanded ? 'hidden' : '';
+        });
+
+        // Close on escape
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && nav.classList.contains('is-open')) {
+            toggle.setAttribute('aria-expanded', 'false');
+            nav.classList.remove('is-open');
+            document.body.style.overflow = '';
+            toggle.focus();
+          }
+        });
+
+        // Close on resize to desktop
+        window.addEventListener('resize', () => {
+          if (window.innerWidth > 768 && nav.classList.contains('is-open')) {
+            toggle.setAttribute('aria-expanded', 'false');
+            nav.classList.remove('is-open');
+            document.body.style.overflow = '';
+          }
+        });
+      }
+    </script>
   </body>
 </html>

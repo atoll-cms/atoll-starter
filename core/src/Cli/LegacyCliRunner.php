@@ -1,0 +1,2039 @@
+<?php
+
+declare(strict_types=1);
+
+use Atoll\Cache\CacheManager;
+use Atoll\Content\ContentRepository;
+use Atoll\Hooks\HookManager;
+use Atoll\Support\Config;
+use Atoll\Support\PackageInstaller;
+use Atoll\Support\Yaml;
+
+$argv = is_array($GLOBALS['__ATOLL_CLI_ARGV'] ?? null) ? $GLOBALS['__ATOLL_CLI_ARGV'] : ($_SERVER['argv'] ?? []);
+$args = $argv;
+array_shift($args);
+$command = $args[0] ?? 'help';
+$root = rtrim((string) ($GLOBALS['__ATOLL_CLI_ROOT'] ?? getcwd() ?: '.'), '/');
+$configPath = $root . '/config.yaml';
+$config = Config::load($configPath);
+$corePath = resolveCorePath($root, $config);
+
+$printHelp = static function (): void {
+    echo "atoll-cms CLI\n\n";
+    echo "Commands:\n";
+    echo "  atoll serve [port]                               Build frontend bundles once, then start server\n";
+    echo "  atoll dev [port]                                 Watch frontend bundles and start server\n";
+    echo "  atoll dev:local [port] [--activate=<id>]         Use sibling core repo, start dev\n";
+    echo "                   [--force-links] [--setup-only]\n";
+    echo "  atoll cache:clear                                Clear HTML cache\n";
+    echo "  atoll content:index:status                       Show content index status\n";
+    echo "  atoll content:index:rebuild                      Rebuild SQLite content index\n";
+    echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
+    echo "  atoll core:status                                Show active core path/version\n";
+    echo "  atoll core:sync [source|--source=<path>]         Sync bundled ./core from another core checkout\n";
+    echo "  atoll core:check [channel]                       Check update channel for newer core\n";
+    echo "  atoll core:update <source> [--no-backup] [--keep-old]\n";
+    echo "                                                   Update core from local directory/release\n";
+    echo "  atoll core:update:remote [channel] [--no-backup] [--keep-old]\n";
+    echo "                                                   Update core from signed remote manifest\n";
+    echo "  atoll core:rollback [--from-dir=<path>] [--from-backup=<zip>]\n";
+    echo "                      [--no-backup] [--keep-current]            Roll back core to previous version\n";
+    echo "  atoll core:migrate [--from=<v>] [--to=<v>]       Run semantic core migrations\n";
+    echo "  atoll plugin:list                                List installed plugins\n";
+    echo "  atoll plugin:install <source> [--enable] [--force]\n";
+    echo "                                                   Install plugin from folder/zip/url\n";
+    echo "  atoll plugin:install:registry <id> [--enable] [--force] [--license=<key>]\n";
+    echo "                                                   Install plugin via plugin-registry.json\n";
+    echo "  atoll theme:list                                 List available themes (site + built-in core)\n";
+    echo "  atoll theme:activate <id>                        Activate a theme\n";
+    echo "  atoll theme:install <source> [--force]           Install theme from folder/zip/url\n";
+    echo "  atoll theme:install:registry <id> [--force] [--license=<key>]\n";
+    echo "                                                   Install theme via theme-registry.json\n";
+    echo "  atoll preset:list                                List starter content presets\n";
+    echo "  atoll preset:apply <id> [--force] [--no-theme]   Apply content preset to project\n";
+    echo "  atoll islands:build                              Build frontend bundles once\n";
+};
+
+switch ($command) {
+    case 'dev-local':
+    case 'dev:local':
+        $port = (int) (firstPositionalArg($args, 1) ?? 8080);
+        $forceLinks = in_array('--force-links', $args, true);
+        $setupOnly = in_array('--setup-only', $args, true);
+        $activateTheme = getFlagValue($args, '--activate');
+
+        $messages = setupLocalDevWorkspace($root, $configPath, $forceLinks, $activateTheme);
+        foreach ($messages as $message) {
+            echo $message . "\n";
+        }
+
+        if ($setupOnly) {
+            exit(0);
+        }
+
+        $config = Config::load($configPath);
+        $corePath = resolveCorePath($root, $config);
+        $watchers = startFrontendWatchers($root, $corePath, $config);
+        if ($watchers === []) {
+            echo "No frontend source packages detected. Starting PHP server only.\n";
+        }
+        register_shutdown_function(static function () use (&$watchers): void {
+            stopBackgroundProcesses($watchers);
+        });
+        $workspaceRoot = realpath(dirname($root));
+        $workspaceRoot = $workspaceRoot !== false ? $workspaceRoot : dirname($root);
+        $exitCode = runPhpServer($root, $port, [
+            'ATOLL_DEV_LOCAL' => '1',
+            'ATOLL_DEV_LOCAL_WORKSPACE' => $workspaceRoot,
+        ]);
+        stopBackgroundProcesses($watchers);
+        exit($exitCode);
+
+    case 'dev':
+        $port = (int) ($args[1] ?? 8080);
+        $watchers = startFrontendWatchers($root, $corePath, $config);
+        if ($watchers === []) {
+            echo "No frontend source packages detected. Starting PHP server only.\n";
+        }
+        register_shutdown_function(static function () use (&$watchers): void {
+            stopBackgroundProcesses($watchers);
+        });
+        $exitCode = runPhpServer($root, $port);
+        stopBackgroundProcesses($watchers);
+        exit($exitCode);
+
+    case 'serve':
+        $port = (int) ($args[1] ?? 8080);
+        $built = runFrontendBuildsOnce($root, $corePath, $config);
+        if ($built === 0) {
+            echo "No frontend source packages detected. Starting PHP server only.\n";
+        }
+        $exitCode = runPhpServer($root, $port);
+        exit($exitCode);
+
+    case 'cache:clear':
+        $cache = new CacheManager(
+            $root . '/cache',
+            (bool) Config::get($config, 'cache.enabled', true),
+            new HookManager(),
+            (int) Config::get($config, 'cache.ttl', 3600)
+        );
+        $cache->clear();
+        echo "Cache cleared.\n";
+        exit(0);
+
+    case 'content:index:status':
+    case 'content:index:rebuild':
+        $content = makeContentRepository($root, $config);
+        if (!method_exists($content, 'indexStatus') || !method_exists($content, 'rebuildIndex')) {
+            echo "Content index commands require a newer core version.\n";
+            echo "Run: php bin/atoll core:update:remote stable\n";
+            exit(1);
+        }
+
+        if ($command === 'content:index:rebuild') {
+            $result = $content->rebuildIndex();
+            if (!$result['enabled']) {
+                echo "Content index is disabled.\n";
+                echo "Enable it in config.yaml with content.index.enabled: true\n";
+                exit(1);
+            }
+            echo "Content index rebuilt.\n";
+            echo "Indexed entries: " . (int) $result['indexed'] . "\n";
+            if ($result['path'] !== '') {
+                echo "Database: " . $result['path'] . "\n";
+            }
+            exit(0);
+        }
+
+        $status = $content->indexStatus();
+        if (!(bool) ($status['enabled'] ?? false)) {
+            echo "Content index: disabled\n";
+            $reason = (string) ($status['reason'] ?? '');
+            if ($reason !== '') {
+                echo "Reason: {$reason}\n";
+            }
+            echo "Enable in config.yaml:\n";
+            echo "content:\n";
+            echo "  index:\n";
+            echo "    enabled: true\n";
+            echo "    driver: sqlite\n";
+            echo "    path: cache/content-index.sqlite\n";
+            exit(0);
+        }
+
+        echo "Content index: enabled\n";
+        echo "Path: " . (string) ($status['path'] ?? '') . "\n";
+        echo "Entries: " . (int) ($status['entries'] ?? 0) . "\n";
+        echo "Last rebuild: " . ((string) ($status['last_rebuild_at'] ?? '') ?: 'n/a') . "\n";
+        echo "Last update: " . ((string) ($status['last_update_at'] ?? '') ?: 'n/a') . "\n";
+        $reason = trim((string) ($status['reason'] ?? ''));
+        if ($reason !== '') {
+            echo "Note: {$reason}\n";
+        }
+        exit(0);
+
+    case 'new':
+        $target = $args[1] ?? null;
+        if ($target === null) {
+            fail("Usage: atoll new <path>");
+        }
+
+        $parent = realpath(dirname($target));
+        if ($parent === false) {
+            fail('Target parent directory does not exist.');
+        }
+
+        $targetPath = $parent . '/' . basename($target);
+        if (file_exists($targetPath)) {
+            fail("Target already exists: {$targetPath}");
+        }
+
+        mkdir($targetPath, 0775, true);
+        $cmd = sprintf(
+            'rsync -a --exclude .git --exclude vendor --exclude cache --exclude backups %s/ %s/',
+            escapeshellarg($root),
+            escapeshellarg($targetPath)
+        );
+        passthru($cmd, $code);
+        if ($code !== 0) {
+            fail('Scaffold failed.');
+        }
+
+        echo "New atoll-cms project created at {$targetPath}\n";
+        exit(0);
+
+    case 'core:status':
+        $version = readCoreVersion($corePath);
+        $bundledCorePath = rtrim($root . '/core', '/');
+        $bundledVersion = readCoreVersion($bundledCorePath);
+        $usesBundledCore = corePathsEqual($corePath, $bundledCorePath);
+        $channel = (string) Config::get($config, 'updater.channel', 'stable');
+        $manifest = (string) Config::get($config, 'updater.manifest_url', '');
+
+        echo "Core path: {$corePath}\n";
+        echo "Core version: {$version}\n";
+        echo "Bundled core: {$bundledCorePath} ({$bundledVersion})\n";
+        echo "Runtime source: " . ($usesBundledCore ? 'bundled ./core' : 'external core.path') . "\n";
+        if (!$usesBundledCore) {
+            echo "Hint: run 'php bin/atoll core:sync' to refresh bundled ./core from active core.path.\n";
+        }
+        echo "Update channel: {$channel}\n";
+        echo "Manifest URL: " . ($manifest !== '' ? $manifest : '(not configured)') . "\n";
+        exit(0);
+
+    case 'core:sync':
+        $sourceArg = getFlagValue($args, '--source') ?? firstPositionalArg($args, 1);
+        $bundledCorePath = rtrim($root . '/core', '/');
+        if ($sourceArg === null || trim($sourceArg) === '') {
+            if (!corePathsEqual($corePath, $bundledCorePath) && is_file($corePath . '/src/bootstrap.php')) {
+                $sourceArg = $corePath;
+            } else {
+                $siblingCore = rtrim(dirname($root), '/') . '/atoll-core';
+                if (is_file($siblingCore . '/src/bootstrap.php')) {
+                    $sourceArg = $siblingCore;
+                } else {
+                    fail("Usage: atoll core:sync [source|--source=<path>]\nNo source detected (active core.path is bundled and ../atoll-core is missing).");
+                }
+            }
+        }
+
+        $sourceCore = detectCoreSource((string) $sourceArg);
+        if (corePathsEqual($sourceCore, $bundledCorePath)) {
+            echo "Bundled ./core is already the selected source ({$sourceCore}).\n";
+            exit(0);
+        }
+
+        $result = syncBundledCoreFromSource($root, $sourceCore, $bundledCorePath);
+        echo "Bundled core synced.\n";
+        echo "Source: {$sourceCore}\n";
+        echo "Destination: {$bundledCorePath}\n";
+        echo "Source version: " . (string) ($result['source_version'] ?? 'unknown') . "\n";
+        echo "Destination version: " . (string) ($result['destination_version'] ?? 'unknown') . "\n";
+        exit(0);
+
+    case 'core:check':
+        $channel = firstPositionalArg($args, 1) ?? (string) Config::get($config, 'updater.channel', 'stable');
+        $currentVersion = readCoreVersion($corePath);
+        $manifest = loadUpdateManifest($config, $channel);
+        $release = selectLatestRelease($manifest, $currentVersion);
+
+        echo "Current core version: {$currentVersion}\n";
+        if ($release === null) {
+            echo "No newer release found for channel '{$channel}'.\n";
+            exit(0);
+        }
+
+        echo "Update available: {$release['version']}\n";
+        echo "Artifact: {$release['artifact_url']}\n";
+        if (is_string($release['notes'] ?? null) && $release['notes'] !== '') {
+            echo "Notes: {$release['notes']}\n";
+        }
+        exit(0);
+
+    case 'core:update':
+        $source = $args[1] ?? null;
+        if ($source === null) {
+            fail('Usage: atoll core:update <source> [--no-backup] [--keep-old]');
+        }
+
+        $sourceCore = detectCoreSource($source);
+        $noBackup = in_array('--no-backup', $args, true);
+        $keepOld = in_array('--keep-old', $args, true);
+
+        $oldVersion = readCoreVersion($corePath);
+        $newVersion = readCoreVersion($sourceCore);
+
+        $result = performCoreSwapUpdate(
+            root: $root,
+            configPath: $configPath,
+            config: $config,
+            currentCorePath: $corePath,
+            sourceCorePath: $sourceCore,
+            oldVersion: $oldVersion,
+            newVersion: $newVersion,
+            createBackup: !$noBackup,
+            keepOld: $keepOld,
+            sourceLabel: 'local source'
+        );
+
+        recordCoreUpdateEvent($root, [
+            'type' => 'update',
+            'source' => 'local',
+            'old_version' => $oldVersion,
+            'new_version' => $newVersion,
+            'backup' => $result['backup'] ?? null,
+            'old_core_path' => $result['old_core_path'] ?? null,
+        ]);
+        printUpdateResult($result);
+        exit(0);
+
+    case 'core:update:remote':
+        $channel = firstPositionalArg($args, 1) ?? (string) Config::get($config, 'updater.channel', 'stable');
+        $noBackup = in_array('--no-backup', $args, true);
+        $keepOld = in_array('--keep-old', $args, true);
+
+        $oldVersion = readCoreVersion($corePath);
+        $manifest = loadUpdateManifest($config, $channel);
+        $release = selectLatestRelease($manifest, $oldVersion);
+        if ($release === null) {
+            fail("No newer release found for channel '{$channel}'.");
+        }
+
+        $cacheDownloadDir = $root . '/cache/downloads';
+        if (!is_dir($cacheDownloadDir)) {
+            mkdir($cacheDownloadDir, 0775, true);
+        }
+
+        $artifactZip = downloadArtifact((string) $release['artifact_url'], $cacheDownloadDir, $config);
+        verifyReleaseIntegrity($release, $artifactZip, $config, $root);
+
+        $extracted = extractZipPackage($artifactZip, $root . '/cache');
+        $sourceCore = detectCoreSource($extracted);
+
+        $result = performCoreSwapUpdate(
+            root: $root,
+            configPath: $configPath,
+            config: $config,
+            currentCorePath: $corePath,
+            sourceCorePath: $sourceCore,
+            oldVersion: $oldVersion,
+            newVersion: (string) $release['version'],
+            createBackup: !$noBackup,
+            keepOld: $keepOld,
+            sourceLabel: 'remote channel ' . $channel
+        );
+
+        recordCoreUpdateEvent($root, [
+            'type' => 'update',
+            'source' => 'remote:' . $channel,
+            'old_version' => $oldVersion,
+            'new_version' => (string) $release['version'],
+            'backup' => $result['backup'] ?? null,
+            'old_core_path' => $result['old_core_path'] ?? null,
+            'artifact_url' => (string) ($release['artifact_url'] ?? ''),
+            'artifact_sha256' => (string) ($release['artifact_sha256'] ?? ''),
+        ]);
+        printUpdateResult($result);
+        exit(0);
+
+    case 'core:rollback':
+        $fromDir = getFlagValue($args, '--from-dir');
+        $fromBackup = getFlagValue($args, '--from-backup');
+        $noBackup = in_array('--no-backup', $args, true);
+        $keepCurrent = in_array('--keep-current', $args, true);
+
+        [$rollbackSourcePath, $rollbackLabel] = resolveRollbackSource($root, $fromDir, $fromBackup);
+        $sourceCore = detectCoreSource($rollbackSourcePath);
+
+        $oldVersion = readCoreVersion($corePath);
+        $newVersion = readCoreVersion($sourceCore);
+
+        $result = performCoreSwapUpdate(
+            root: $root,
+            configPath: $configPath,
+            config: $config,
+            currentCorePath: $corePath,
+            sourceCorePath: $sourceCore,
+            oldVersion: $oldVersion,
+            newVersion: $newVersion,
+            createBackup: !$noBackup,
+            keepOld: $keepCurrent,
+            sourceLabel: 'rollback from ' . $rollbackLabel
+        );
+
+        recordCoreUpdateEvent($root, [
+            'type' => 'rollback',
+            'source' => $rollbackLabel,
+            'old_version' => $oldVersion,
+            'new_version' => $newVersion,
+            'backup' => $result['backup'] ?? null,
+            'old_core_path' => $result['old_core_path'] ?? null,
+        ]);
+        printUpdateResult($result);
+        exit(0);
+
+    case 'core:migrate':
+        $from = getFlagValue($args, '--from') ?? readCoreVersion($corePath);
+        $to = getFlagValue($args, '--to') ?? readCoreVersion($corePath);
+
+        $state = runCoreMigrations($root, $configPath, $corePath, (string) $from, (string) $to);
+        echo "Core migrations complete.\n";
+        echo "Applied: " . count($state['applied']) . "\n";
+        exit(0);
+
+    case 'plugin:list':
+        $stateFile = $root . '/content/data/plugins.yaml';
+        $state = is_file($stateFile) ? Yaml::parse((string) file_get_contents($stateFile)) : [];
+        $state = is_array($state) ? $state : [];
+        $defaultsEnabled = (bool) Config::get($config, 'plugins.defaults_enabled', true);
+
+        $dirs = glob($root . '/plugins/*', GLOB_ONLYDIR) ?: [];
+        if ($dirs === []) {
+            echo "No plugins installed.\n";
+            exit(0);
+        }
+
+        foreach ($dirs as $dir) {
+            $id = basename($dir);
+            $manifestFile = $dir . '/plugin.php';
+            $name = $id;
+            if (is_file($manifestFile)) {
+                $manifest = require $manifestFile;
+                if (is_array($manifest) && is_string($manifest['name'] ?? null)) {
+                    $name = $manifest['name'];
+                }
+            }
+            $active = (bool) ($state[$id] ?? $defaultsEnabled);
+            echo sprintf("- %s (%s) [%s]\n", $id, $name, $active ? 'active' : 'inactive');
+        }
+        exit(0);
+
+    case 'plugin:install':
+        $source = $args[1] ?? null;
+        if ($source === null) {
+            fail('Usage: atoll plugin:install <source> [--enable] [--force]');
+        }
+
+        $force = in_array('--force', $args, true);
+        $enable = in_array('--enable', $args, true);
+
+        try {
+            $result = PackageInstaller::installPlugin($root, $source, $force, $enable, $config);
+        } catch (RuntimeException $e) {
+            fail($e->getMessage());
+        }
+
+        echo "Plugin installed: " . $result['id'] . "\n";
+        if (($result['enabled'] ?? false) === true) {
+            echo "Plugin enabled: " . $result['id'] . "\n";
+        }
+        exit(0);
+
+    case 'plugin:install:registry':
+        $id = $args[1] ?? null;
+        if ($id === null) {
+            fail('Usage: atoll plugin:install:registry <id> [--enable] [--force] [--license=<key>]');
+        }
+
+        $force = in_array('--force', $args, true);
+        $enable = in_array('--enable', $args, true);
+        $licenseKey = getFlagValue($args, '--license');
+
+        try {
+            $result = PackageInstaller::installPluginFromRegistry(
+                $root,
+                $id,
+                $force,
+                $enable,
+                $config,
+                $licenseKey !== null && trim($licenseKey) !== '' ? trim($licenseKey) : null
+            );
+        } catch (RuntimeException $e) {
+            fail($e->getMessage());
+        }
+
+        if (($result['linked'] ?? false) === true) {
+            echo "Plugin linked from local repository: " . $result['id'] . "\n";
+        } else {
+            echo "Plugin installed from registry: " . $result['id'] . "\n";
+        }
+        if (($result['enabled'] ?? false) === true) {
+            echo "Plugin enabled: " . $result['id'] . "\n";
+        }
+        exit(0);
+
+    case 'theme:list':
+        $activeTheme = (string) Config::get($config, 'appearance.theme', 'default');
+        $themes = listAvailableThemes($root, $corePath);
+        foreach ($themes as $theme) {
+            $id = (string) ($theme['id'] ?? '');
+            $source = (string) ($theme['source'] ?? 'unknown');
+            $marker = $id === $activeTheme ? '*' : ' ';
+            echo sprintf("%s %s (%s)\n", $marker, $id, $source);
+        }
+        if ($themes === []) {
+            echo "No themes found.\n";
+        }
+        exit(0);
+
+    case 'theme:activate':
+        $id = $args[1] ?? null;
+        if ($id === null || trim($id) === '') {
+            fail('Usage: atoll theme:activate <id>');
+        }
+
+        $id = trim($id);
+        $themes = listAvailableThemes($root, $corePath);
+        $index = [];
+        foreach ($themes as $theme) {
+            $themeId = (string) ($theme['id'] ?? '');
+            if ($themeId !== '') {
+                $index[$themeId] = true;
+            }
+        }
+
+        if (!isset($index[$id])) {
+            fail("Theme not found: {$id}");
+        }
+
+        $appearance = Config::get($config, 'appearance', []);
+        $appearance = is_array($appearance) ? $appearance : [];
+        $appearance['theme'] = $id;
+        $config['appearance'] = $appearance;
+        Config::save($configPath, $config);
+        echo "Theme activated: {$id}\n";
+        exit(0);
+
+    case 'theme:install':
+        $source = $args[1] ?? null;
+        if ($source === null) {
+            fail('Usage: atoll theme:install <source> [--force]');
+        }
+
+        $force = in_array('--force', $args, true);
+        try {
+            $result = PackageInstaller::installTheme($root, $source, $force, $config);
+        } catch (RuntimeException $e) {
+            fail($e->getMessage());
+        }
+
+        echo "Theme installed: " . $result['id'] . "\n";
+        exit(0);
+
+    case 'theme:install:registry':
+        $id = $args[1] ?? null;
+        if ($id === null) {
+            fail('Usage: atoll theme:install:registry <id> [--force] [--license=<key>]');
+        }
+
+        $force = in_array('--force', $args, true);
+        $licenseKey = getFlagValue($args, '--license');
+        try {
+            $result = PackageInstaller::installThemeFromRegistry(
+                $root,
+                $id,
+                $force,
+                $config,
+                $licenseKey !== null && trim($licenseKey) !== '' ? trim($licenseKey) : null
+            );
+        } catch (RuntimeException $e) {
+            fail($e->getMessage());
+        }
+
+        if (($result['linked'] ?? false) === true) {
+            echo "Theme linked from local repository: " . $result['id'] . "\n";
+        } else {
+            echo "Theme installed from registry: " . $result['id'] . "\n";
+        }
+        exit(0);
+
+    case 'preset:list':
+        $presets = listPresets($root);
+        if ($presets === []) {
+            echo "No presets found.\n";
+            exit(0);
+        }
+
+        foreach ($presets as $preset) {
+            $id = (string) ($preset['id'] ?? '');
+            $theme = (string) ($preset['theme'] ?? 'default');
+            $description = (string) ($preset['description'] ?? '');
+            echo sprintf("- %s (theme: %s)%s\n", $id, $theme, $description !== '' ? " - {$description}" : '');
+        }
+        exit(0);
+
+    case 'preset:apply':
+        $id = $args[1] ?? null;
+        if ($id === null || trim($id) === '') {
+            fail('Usage: atoll preset:apply <id> [--force] [--no-theme]');
+        }
+
+        $id = trim($id);
+        $force = in_array('--force', $args, true);
+        $setTheme = !in_array('--no-theme', $args, true);
+        $preset = loadPreset($root, $id);
+        if ($preset === null) {
+            fail("Preset not found: {$id}");
+        }
+
+        $sourceContentDir = rtrim((string) ($preset['path'] ?? ''), '/') . '/content';
+        if (!is_dir($sourceContentDir)) {
+            fail("Preset content missing: {$sourceContentDir}");
+        }
+
+        $targetContentDir = $root . '/content';
+        copyPresetTree($sourceContentDir, $targetContentDir, $force);
+
+        $appliedTheme = '';
+        $installedTheme = '';
+        if ($setTheme) {
+            $theme = trim((string) ($preset['theme'] ?? ''));
+            $themeRegistryId = trim((string) ($preset['theme_registry_id'] ?? ''));
+            if ($theme !== '') {
+                $themes = listAvailableThemes($root, $corePath);
+                $themeExists = false;
+                foreach ($themes as $entry) {
+                    if (($entry['id'] ?? null) === $theme) {
+                        $themeExists = true;
+                        break;
+                    }
+                }
+
+                if (!$themeExists && $themeRegistryId !== '') {
+                    try {
+                        $installed = PackageInstaller::installThemeFromRegistry($root, $themeRegistryId, $force, $config);
+                    } catch (RuntimeException $e) {
+                        fail('Preset requires theme install failed: ' . $e->getMessage());
+                    }
+
+                    $installedTheme = (string) ($installed['id'] ?? '');
+                    $themes = listAvailableThemes($root, $corePath);
+                    foreach ($themes as $entry) {
+                        if (($entry['id'] ?? null) === $theme) {
+                            $themeExists = true;
+                            break;
+                        }
+                    }
+                }
+
+                if ($themeExists) {
+                    $appearance = Config::get($config, 'appearance', []);
+                    $appearance = is_array($appearance) ? $appearance : [];
+                    $appearance['theme'] = $theme;
+                    $config['appearance'] = $appearance;
+                    Config::save($configPath, $config);
+                    $appliedTheme = $theme;
+                }
+            }
+        }
+
+        echo "Preset applied: {$id}\n";
+        if ($installedTheme !== '') {
+            echo "Theme installed: {$installedTheme}\n";
+        }
+        if ($appliedTheme !== '') {
+            echo "Theme activated: {$appliedTheme}\n";
+        }
+        echo "Tip: clear cache via 'php bin/atoll cache:clear' if needed.\n";
+        exit(0);
+
+    case 'islands:build':
+        $built = runFrontendBuildsOnce($root, $corePath, $config);
+        echo $built > 0 ? "Frontend bundles built.\n" : "No frontend source packages detected.\n";
+        exit(0);
+
+    case 'help':
+    default:
+        $printHelp();
+        exit($command === 'help' ? 0 : 1);
+}
+
+function fail(string $message): never
+{
+    fwrite(STDERR, $message . "\n");
+    exit(1);
+}
+
+/**
+ * @param array<string, mixed> $config
+ */
+function makeContentRepository(string $root, array $config): ContentRepository
+{
+    $hooks = new HookManager();
+    $reflection = new ReflectionClass(ContentRepository::class);
+    $constructor = $reflection->getConstructor();
+    $parameterCount = $constructor?->getNumberOfParameters() ?? 0;
+
+    if ($parameterCount >= 4) {
+        /** @var ContentRepository */
+        return new ContentRepository($root . '/content', $hooks, $config, $root);
+    }
+
+    /** @var ContentRepository */
+    return new ContentRepository($root . '/content', $hooks);
+}
+
+/**
+ * @return array<int, string>
+ */
+function setupLocalDevWorkspace(
+    string $root,
+    string $configPath,
+    bool $forceLinks = false,
+    ?string $activateTheme = null
+): array {
+    $messages = [];
+    $workspaceRoot = realpath(dirname($root));
+    if ($workspaceRoot === false) {
+        fail('Could not resolve workspace root for local dev setup.');
+    }
+
+    $config = Config::load($configPath);
+    $configChanged = false;
+
+    if (array_key_exists('dev_local', $config)) {
+        unset($config['dev_local']);
+        $configChanged = true;
+    }
+    $messages[] = 'Dev-local runtime mode enabled for this process (registry installs prefer local sibling themes/plugins).';
+
+    $coreCandidate = rtrim($workspaceRoot, '/') . '/atoll-core';
+    if (is_dir($coreCandidate)) {
+        $desiredCorePath = '../atoll-core';
+        $currentCorePath = (string) Config::get($config, 'core.path', 'core');
+        if ($currentCorePath !== $desiredCorePath) {
+            $coreConfig = Config::get($config, 'core', []);
+            $coreConfig = is_array($coreConfig) ? $coreConfig : [];
+            $coreConfig['path'] = $desiredCorePath;
+            $config['core'] = $coreConfig;
+            $configChanged = true;
+            $messages[] = "Core path set to '{$desiredCorePath}'.";
+        } else {
+            $messages[] = "Core path already set to '{$desiredCorePath}'.";
+        }
+    } else {
+        $messages[] = "No sibling core repo found at {$coreCandidate}.";
+    }
+
+    if ($activateTheme !== null && $activateTheme !== '') {
+        $themeId = normalizePackageId($activateTheme);
+        if ($themeId === '') {
+            fail('Invalid --activate value.');
+        }
+
+        $corePath = resolveCorePath($root, $config);
+        $themeExists = false;
+        foreach (listAvailableThemes($root, $corePath) as $theme) {
+            if (($theme['id'] ?? '') === $themeId) {
+                $themeExists = true;
+                break;
+            }
+        }
+
+        if ($themeExists) {
+            $appearance = Config::get($config, 'appearance', []);
+            $appearance = is_array($appearance) ? $appearance : [];
+            if (($appearance['theme'] ?? null) !== $themeId) {
+                $appearance['theme'] = $themeId;
+                $config['appearance'] = $appearance;
+                $configChanged = true;
+                $messages[] = "Activated theme '{$themeId}' in config.";
+            } else {
+                $messages[] = "Theme '{$themeId}' already active in config.";
+            }
+        } else {
+            $messages[] = "Theme '{$themeId}' is not installed; trying registry install (dev-local aware).";
+            $previousDevLocal = getenv('ATOLL_DEV_LOCAL');
+            $previousWorkspace = getenv('ATOLL_DEV_LOCAL_WORKSPACE');
+            putenv('ATOLL_DEV_LOCAL=1');
+            putenv('ATOLL_DEV_LOCAL_WORKSPACE=' . $workspaceRoot);
+
+            try {
+                PackageInstaller::installThemeFromRegistry($root, $themeId, $forceLinks, $config);
+                $messages[] = "Installed theme '{$themeId}'.";
+            } catch (Throwable $e) {
+                $messages[] = "Theme '{$themeId}' install failed: " . $e->getMessage();
+            } finally {
+                if ($previousDevLocal === false) {
+                    putenv('ATOLL_DEV_LOCAL');
+                } else {
+                    putenv('ATOLL_DEV_LOCAL=' . $previousDevLocal);
+                }
+
+                if ($previousWorkspace === false) {
+                    putenv('ATOLL_DEV_LOCAL_WORKSPACE');
+                } else {
+                    putenv('ATOLL_DEV_LOCAL_WORKSPACE=' . $previousWorkspace);
+                }
+            }
+
+            $corePath = resolveCorePath($root, $config);
+            foreach (listAvailableThemes($root, $corePath) as $theme) {
+                if (($theme['id'] ?? '') !== $themeId) {
+                    continue;
+                }
+
+                $appearance = Config::get($config, 'appearance', []);
+                $appearance = is_array($appearance) ? $appearance : [];
+                $appearance['theme'] = $themeId;
+                $config['appearance'] = $appearance;
+                $configChanged = true;
+                $messages[] = "Activated theme '{$themeId}' in config.";
+                $themeExists = true;
+                break;
+            }
+
+            if (!$themeExists) {
+                $messages[] = "Theme '{$themeId}' still unavailable. Activation skipped.";
+            }
+        }
+    }
+
+    if ($configChanged) {
+        Config::save($configPath, $config);
+        $messages[] = 'Saved local dev configuration.';
+    }
+
+    return $messages;
+}
+
+/**
+ * @param array<string, string> $env
+ */
+function runPhpServer(string $root, int $port, array $env = []): int
+{
+    $envPrefix = '';
+    foreach ($env as $key => $value) {
+        if (!preg_match('/^[A-Z0-9_]+$/', $key)) {
+            continue;
+        }
+        $envPrefix .= $key . '=' . escapeshellarg($value) . ' ';
+    }
+
+    $cmd = sprintf(
+        '%sphp -S localhost:%d -t %s %s/index.php',
+        $envPrefix,
+        $port,
+        escapeshellarg($root),
+        escapeshellarg($root)
+    );
+    echo "Starting atoll-cms on http://localhost:{$port}\n";
+    passthru($cmd, $exitCode);
+    return (int) $exitCode;
+}
+
+/**
+ * @param array<string, mixed> $config
+ */
+function runFrontendBuildsOnce(string $root, string $corePath, array $config): int
+{
+    $targets = discoverFrontendBuildTargets($root, $corePath, $config);
+    if ($targets === []) {
+        return 0;
+    }
+
+    ensureNpmAvailable();
+    echo "Building frontend bundles...\n";
+    $builtCount = 0;
+
+    foreach ($targets as $target) {
+        $command = resolveFrontendCommand($target['scripts'], false);
+        if ($command === null) {
+            echo "Skipping {$target['label']} (no build/watch/dev script found): {$target['path']}\n";
+            continue;
+        }
+
+        echo "-> {$target['label']} ({$target['path']})\n";
+        $exitCode = runCommandInDirectory($command, $target['path']);
+        if ($exitCode !== 0) {
+            fail("Frontend build failed for {$target['label']} ({$target['path']}).");
+        }
+        $builtCount++;
+    }
+
+    return $builtCount;
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return array<int, array{label:string,path:string,command:string,process:resource}>
+ */
+function startFrontendWatchers(string $root, string $corePath, array $config): array
+{
+    $targets = discoverFrontendBuildTargets($root, $corePath, $config);
+    if ($targets === []) {
+        return [];
+    }
+
+    ensureNpmAvailable();
+    echo "Starting frontend watchers...\n";
+    $watchers = [];
+
+    foreach ($targets as $target) {
+        $command = resolveFrontendCommand($target['scripts'], true);
+        if ($command === null) {
+            echo "Skipping {$target['label']} (no watch/build/dev script found): {$target['path']}\n";
+            continue;
+        }
+
+        echo "-> {$target['label']} ({$target['path']})\n";
+        $process = startBackgroundProcess($command, $target['path']);
+        if (!is_resource($process)) {
+            fail("Could not start frontend watcher for {$target['label']} ({$target['path']}).");
+        }
+
+        usleep(250000);
+        $status = proc_get_status($process);
+        if (!is_array($status) || ($status['running'] ?? false) !== true) {
+            proc_close($process);
+            fail("Frontend watcher exited immediately for {$target['label']} ({$target['path']}).");
+        }
+
+        $watchers[] = [
+            'label' => $target['label'],
+            'path' => $target['path'],
+            'command' => $command,
+            'process' => $process,
+        ];
+    }
+
+    return $watchers;
+}
+
+/**
+ * @param array<int, array{label:string,path:string,command:string,process:resource}> $watchers
+ */
+function stopBackgroundProcesses(array &$watchers): void
+{
+    foreach ($watchers as $watcher) {
+        $process = $watcher['process'] ?? null;
+        if (!is_resource($process)) {
+            continue;
+        }
+
+        $status = proc_get_status($process);
+        if (is_array($status) && ($status['running'] ?? false) === true) {
+            proc_terminate($process);
+            usleep(200000);
+
+            $status = proc_get_status($process);
+            if (is_array($status) && ($status['running'] ?? false) === true) {
+                proc_terminate($process, 9);
+            }
+        }
+
+        proc_close($process);
+    }
+
+    $watchers = [];
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return array<int, array{label:string,path:string,scripts:array<string,string>}>
+ */
+function discoverFrontendBuildTargets(string $root, string $corePath, array $config): array
+{
+    $activeTheme = trim((string) Config::get($config, 'appearance.theme', 'default'));
+    if ($activeTheme === '') {
+        $activeTheme = 'default';
+    }
+
+    $candidates = [
+        ['label' => 'core-admin', 'path' => rtrim($corePath, '/') . '/admin-src'],
+        ['label' => 'core-islands', 'path' => rtrim($corePath, '/') . '/islands-src'],
+        ['label' => 'site-islands', 'path' => rtrim($root, '/') . '/islands-src'],
+        ['label' => 'theme:' . $activeTheme, 'path' => rtrim($root, '/') . '/themes/' . $activeTheme . '/islands-src'],
+        ['label' => 'theme:' . $activeTheme, 'path' => rtrim($root, '/') . '/themes/' . $activeTheme],
+    ];
+
+    $themeRoots = [
+        ['label_prefix' => 'theme', 'path' => rtrim($root, '/') . '/themes'],
+        ['label_prefix' => 'core-theme', 'path' => rtrim($corePath, '/') . '/themes'],
+    ];
+
+    foreach ($themeRoots as $themeRoot) {
+        $dirs = glob(rtrim((string) $themeRoot['path'], '/') . '/*', GLOB_ONLYDIR) ?: [];
+        foreach ($dirs as $dir) {
+            $themeId = basename($dir);
+            $prefix = (string) ($themeRoot['label_prefix'] ?? 'theme');
+            $candidates[] = ['label' => $prefix . ':' . $themeId, 'path' => $dir . '/islands-src'];
+            $candidates[] = ['label' => $prefix . ':' . $themeId, 'path' => $dir];
+        }
+    }
+
+    $pluginDirs = glob(rtrim($root, '/') . '/plugins/*', GLOB_ONLYDIR) ?: [];
+    foreach ($pluginDirs as $pluginDir) {
+        $pluginId = basename($pluginDir);
+        $candidates[] = ['label' => 'plugin:' . $pluginId, 'path' => $pluginDir . '/islands-src'];
+        $candidates[] = ['label' => 'plugin:' . $pluginId, 'path' => $pluginDir];
+    }
+
+    $targets = [];
+    $seen = [];
+
+    foreach ($candidates as $candidate) {
+        $path = rtrim((string) ($candidate['path'] ?? ''), '/');
+        if ($path === '') {
+            continue;
+        }
+
+        $packageFile = $path . '/package.json';
+        if (!is_file($packageFile)) {
+            continue;
+        }
+
+        $realPath = realpath($path);
+        $normalizedPath = $realPath !== false ? rtrim($realPath, '/') : $path;
+        if (isset($seen[$normalizedPath])) {
+            continue;
+        }
+
+        $scripts = readPackageScripts($packageFile);
+        if (!isset($scripts['watch']) && !isset($scripts['build']) && !isset($scripts['dev'])) {
+            continue;
+        }
+
+        $targets[] = [
+            'label' => (string) ($candidate['label'] ?? 'frontend'),
+            'path' => $normalizedPath,
+            'scripts' => $scripts,
+        ];
+        $seen[$normalizedPath] = true;
+    }
+
+    usort(
+        $targets,
+        static fn (array $a, array $b): int => strcmp($a['label'] . '|' . $a['path'], $b['label'] . '|' . $b['path'])
+    );
+
+    return $targets;
+}
+
+/**
+ * @return array<string, string>
+ */
+function readPackageScripts(string $packageFile): array
+{
+    $content = file_get_contents($packageFile);
+    if ($content === false) {
+        return [];
+    }
+
+    $decoded = json_decode($content, true);
+    if (!is_array($decoded) || !is_array($decoded['scripts'] ?? null)) {
+        return [];
+    }
+
+    $scripts = [];
+    foreach ($decoded['scripts'] as $name => $command) {
+        if (is_string($name) && $name !== '' && is_string($command) && $command !== '') {
+            $scripts[$name] = $command;
+        }
+    }
+
+    return $scripts;
+}
+
+/**
+ * @param array<string, string> $scripts
+ */
+function resolveFrontendCommand(array $scripts, bool $watchMode): ?string
+{
+    if ($watchMode) {
+        if (isset($scripts['watch'])) {
+            return 'npm run watch';
+        }
+        if (isset($scripts['build'])) {
+            return 'npm run build -- --watch';
+        }
+        if (isset($scripts['dev'])) {
+            return 'npm run dev';
+        }
+
+        return null;
+    }
+
+    if (isset($scripts['build'])) {
+        return 'npm run build';
+    }
+    if (isset($scripts['watch'])) {
+        return 'npm run watch';
+    }
+    if (isset($scripts['dev'])) {
+        return 'npm run dev';
+    }
+
+    return null;
+}
+
+function ensureNpmAvailable(): void
+{
+    $exitCode = runCommandSilently('command -v npm >/dev/null 2>&1');
+    if ($exitCode !== 0) {
+        fail('Frontend sources detected but npm is not available. Install Node.js/npm or remove source packages.');
+    }
+}
+
+function runCommandSilently(string $command): int
+{
+    exec($command, $output, $exitCode);
+    return (int) $exitCode;
+}
+
+function runCommandInDirectory(string $command, string $cwd): int
+{
+    $full = sprintf('cd %s && %s', escapeshellarg($cwd), $command);
+    passthru($full, $exitCode);
+    return (int) $exitCode;
+}
+
+/**
+ * @return resource|false
+ */
+function startBackgroundProcess(string $command, string $cwd)
+{
+    $nullDevice = DIRECTORY_SEPARATOR === '\\' ? 'NUL' : '/dev/null';
+    $descriptorSpec = [
+        0 => ['file', $nullDevice, 'r'],
+        1 => ['file', 'php://stdout', 'w'],
+        2 => ['file', 'php://stderr', 'w'],
+    ];
+
+    return proc_open($command, $descriptorSpec, $pipes, $cwd);
+}
+
+/** @param array<string, mixed> $config */
+function resolveCorePath(string $root, array $config): string
+{
+    $configured = Config::get($config, 'core.path', 'core');
+    if (!is_string($configured) || $configured === '') {
+        $configured = 'core';
+    }
+
+    if (str_starts_with($configured, '/')) {
+        return rtrim($configured, '/');
+    }
+
+    return rtrim($root . '/' . ltrim($configured, '/'), '/');
+}
+
+function corePathsEqual(string $a, string $b): bool
+{
+    $ra = realpath($a);
+    $rb = realpath($b);
+    if ($ra !== false && $rb !== false) {
+        return rtrim(str_replace('\\', '/', $ra), '/') === rtrim(str_replace('\\', '/', $rb), '/');
+    }
+
+    return rtrim(str_replace('\\', '/', $a), '/') === rtrim(str_replace('\\', '/', $b), '/');
+}
+
+/**
+ * @return array{source_version:string,destination_version:string}
+ */
+function syncBundledCoreFromSource(string $root, string $sourceCore, string $bundledCore): array
+{
+    if (!is_file($sourceCore . '/src/bootstrap.php')) {
+        fail("Invalid core source: {$sourceCore}");
+    }
+
+    $sourceVersion = readCoreVersion($sourceCore);
+    $syncCacheRoot = $root . '/cache';
+    $tmpCopy = createUniqueWorkDir($syncCacheRoot, '.core-sync-new-');
+    $backupCopy = createUniqueWorkDir($syncCacheRoot, '.core-sync-old-');
+
+    copyDirectoryFiltered($sourceCore, $tmpCopy, [
+        '.git',
+        '.github',
+        '.claude',
+        '.playwright-cli',
+        '.DS_Store',
+        'vendor',
+        'cache',
+        'backups',
+        'node_modules',
+        'output',
+        'admin-src',
+    ]);
+
+    if (!is_file($tmpCopy . '/src/bootstrap.php')) {
+        rrmdir($tmpCopy);
+        rrmdir($backupCopy);
+        fail('Core sync aborted: copied source is missing src/bootstrap.php');
+    }
+
+    rrmdir($backupCopy);
+    $hasBundledCore = is_dir($bundledCore);
+    if ($hasBundledCore) {
+        if (!rename($bundledCore, $backupCopy)) {
+            rrmdir($tmpCopy);
+            fail("Could not move existing bundled core out of the way: {$bundledCore}");
+        }
+    }
+
+    if (!rename($tmpCopy, $bundledCore)) {
+        if ($hasBundledCore && is_dir($backupCopy)) {
+            @rename($backupCopy, $bundledCore);
+        }
+        rrmdir($tmpCopy);
+        fail("Could not activate synced bundled core: {$bundledCore}");
+    }
+
+    if ($hasBundledCore && is_dir($backupCopy)) {
+        rrmdir($backupCopy);
+    }
+
+    return [
+        'source_version' => $sourceVersion,
+        'destination_version' => readCoreVersion($bundledCore),
+    ];
+}
+
+/**
+ * @return array<int, array{id:string,source:string}>
+ */
+function listAvailableThemes(string $root, string $corePath): array
+{
+    $rows = [];
+
+    $siteDirs = glob($root . '/themes/*', GLOB_ONLYDIR) ?: [];
+    foreach ($siteDirs as $dir) {
+        $id = basename($dir);
+        $rows[$id] = [
+            'id' => $id,
+            'source' => 'site',
+        ];
+    }
+
+    $coreDirs = glob(rtrim($corePath, '/') . '/themes/*', GLOB_ONLYDIR) ?: [];
+    foreach ($coreDirs as $dir) {
+        $id = basename($dir);
+        if (!isset($rows[$id])) {
+            $rows[$id] = [
+                'id' => $id,
+                'source' => 'core',
+            ];
+        }
+    }
+
+    ksort($rows);
+    return array_values($rows);
+}
+
+/**
+ * @return array<int, array{id:string,theme:string,theme_registry_id:string,description:string,path:string}>
+ */
+function listPresets(string $root): array
+{
+    $baseDir = rtrim($root, '/') . '/content/presets';
+    if (!is_dir($baseDir)) {
+        return [];
+    }
+
+    $dirs = glob($baseDir . '/*', GLOB_ONLYDIR) ?: [];
+    $rows = [];
+    foreach ($dirs as $dir) {
+        $id = basename($dir);
+        $preset = loadPreset($root, $id);
+        if ($preset === null) {
+            continue;
+        }
+        $rows[] = $preset;
+    }
+
+    usort($rows, static fn (array $a, array $b): int => strcmp((string) $a['id'], (string) $b['id']));
+    return $rows;
+}
+
+/**
+ * @return array{id:string,theme:string,theme_registry_id:string,description:string,path:string}|null
+ */
+function loadPreset(string $root, string $id): ?array
+{
+    $cleanId = basename(trim($id));
+    if ($cleanId === '' || $cleanId === '.' || $cleanId === '..') {
+        return null;
+    }
+
+    $dir = rtrim($root, '/') . '/content/presets/' . $cleanId;
+    if (!is_dir($dir)) {
+        return null;
+    }
+
+    $metaFile = $dir . '/preset.yaml';
+    if (!is_file($metaFile)) {
+        return null;
+    }
+
+    $meta = Yaml::parse((string) file_get_contents($metaFile));
+    if (!is_array($meta)) {
+        return null;
+    }
+
+    return [
+        'id' => $cleanId,
+        'theme' => (string) ($meta['theme'] ?? ''),
+        'theme_registry_id' => (string) ($meta['theme_registry_id'] ?? ''),
+        'description' => (string) ($meta['description'] ?? ''),
+        'path' => $dir,
+    ];
+}
+
+function copyPresetTree(string $sourceDir, string $targetDir, bool $force): void
+{
+    $sourceDir = rtrim($sourceDir, '/');
+    $targetDir = rtrim($targetDir, '/');
+    $files = listFilesRecursive($sourceDir);
+
+    $conflicts = [];
+    foreach ($files as $file) {
+        $relative = ltrim(substr($file, strlen($sourceDir)), '/');
+        $target = $targetDir . '/' . $relative;
+        if (!$force && file_exists($target)) {
+            $conflicts[] = $relative;
+        }
+    }
+
+    if ($conflicts !== []) {
+        $preview = array_slice($conflicts, 0, 8);
+        $suffix = count($conflicts) > 8 ? ' ...' : '';
+        fail(
+            "Preset would overwrite existing files. Use --force.\n- "
+            . implode("\n- ", $preview)
+            . $suffix
+        );
+    }
+
+    foreach ($files as $file) {
+        $relative = ltrim(substr($file, strlen($sourceDir)), '/');
+        $target = $targetDir . '/' . $relative;
+        $targetDirname = dirname($target);
+        if (!is_dir($targetDirname)) {
+            mkdir($targetDirname, 0775, true);
+        }
+        copy($file, $target);
+    }
+}
+
+/** @return array<int, string> */
+function listFilesRecursive(string $dir): array
+{
+    $files = [];
+    $it = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS)
+    );
+
+    foreach ($it as $item) {
+        if ($item->isFile()) {
+            $files[] = $item->getPathname();
+        }
+    }
+
+    sort($files);
+    return $files;
+}
+
+function readCoreVersion(string $corePath): string
+{
+    $versionFile = $corePath . '/VERSION';
+    if (is_file($versionFile)) {
+        return trim((string) file_get_contents($versionFile));
+    }
+
+    return 'unknown';
+}
+
+/** @return array<string, mixed> */
+function loadUpdateManifest(array $config, string $channel): array
+{
+    $manifestUrl = Config::get($config, 'updater.manifest_url', '');
+    if (!is_string($manifestUrl) || $manifestUrl === '') {
+        fail('No updater.manifest_url configured in config.yaml');
+    }
+
+    $timeout = (int) Config::get($config, 'updater.timeout_seconds', 15);
+    $raw = fetchRemoteText($manifestUrl, $timeout);
+    $manifest = json_decode($raw, true);
+    if (!is_array($manifest)) {
+        fail('Update manifest is not valid JSON.');
+    }
+
+    if (($manifest['channel'] ?? null) !== $channel) {
+        fail("Manifest channel mismatch. Expected '{$channel}', got '" . ($manifest['channel'] ?? 'unknown') . "'.");
+    }
+
+    if (!is_array($manifest['releases'] ?? null)) {
+        fail('Manifest missing releases array.');
+    }
+
+    return $manifest;
+}
+
+/** @param array<string, mixed> $manifest
+ *  @return array<string, mixed>|null
+ */
+function selectLatestRelease(array $manifest, string $currentVersion): ?array
+{
+    $releases = array_filter($manifest['releases'] ?? [], static fn ($r) => is_array($r));
+    usort($releases, static function (array $a, array $b): int {
+        return version_compare((string) ($b['version'] ?? '0.0.0'), (string) ($a['version'] ?? '0.0.0'));
+    });
+
+    foreach ($releases as $release) {
+        $version = (string) ($release['version'] ?? '0.0.0');
+        if (version_compare($version, $currentVersion, '>')) {
+            return $release;
+        }
+    }
+
+    return null;
+}
+
+/** @param array<string, mixed> $config */
+function downloadArtifact(string $url, string $downloadDir, array $config): string
+{
+    $timeout = (int) Config::get($config, 'updater.timeout_seconds', 30);
+    if (!is_dir($downloadDir)) {
+        mkdir($downloadDir, 0775, true);
+    }
+
+    $filename = basename(parse_url($url, PHP_URL_PATH) ?: 'core-release.zip');
+    $filename = $filename !== '' ? $filename : 'core-release.zip';
+    $target = rtrim($downloadDir, '/') . '/' . $filename;
+
+    $binary = fetchRemoteBinary($url, $timeout);
+    file_put_contents($target, $binary);
+
+    return $target;
+}
+
+/**
+ * @param array<string, mixed> $release
+ * @param array<string, mixed> $config
+ */
+function verifyReleaseIntegrity(array $release, string $artifactZip, array $config, string $root): void
+{
+    $expectedSha = (string) ($release['artifact_sha256'] ?? '');
+    if ($expectedSha === '') {
+        fail('Release missing artifact_sha256.');
+    }
+
+    $actualSha = hash_file('sha256', $artifactZip);
+    if (!hash_equals(strtolower($expectedSha), strtolower($actualSha))) {
+        fail('Artifact checksum mismatch.');
+    }
+
+    $requireSignature = (bool) Config::get($config, 'updater.require_signature', true);
+    $signature = (string) ($release['signature'] ?? '');
+
+    if (!$requireSignature && $signature === '') {
+        return;
+    }
+
+    if ($signature === '') {
+        fail('Signature required but release signature missing.');
+    }
+
+    $publicKeySetting = Config::get($config, 'updater.public_key', '');
+    if (!is_string($publicKeySetting) || $publicKeySetting === '') {
+        fail('Signature required but updater.public_key not configured.');
+    }
+
+    $publicKeyPath = str_starts_with($publicKeySetting, '/')
+        ? $publicKeySetting
+        : rtrim($root, '/') . '/' . ltrim($publicKeySetting, '/');
+
+    if (!is_file($publicKeyPath)) {
+        fail('Public key file not found: ' . $publicKeyPath);
+    }
+
+    $publicKey = (string) file_get_contents($publicKeyPath);
+    $payload = (string) ($release['signature_payload'] ?? ('atoll-core|' . ($release['version'] ?? '') . '|' . $expectedSha));
+    $rawSignature = base64_decode($signature, true);
+    if (!is_string($rawSignature)) {
+        fail('Release signature is not valid base64.');
+    }
+
+    if (!function_exists('openssl_verify')) {
+        fail('OpenSSL extension required for signature verification.');
+    }
+
+    $verified = openssl_verify($payload, $rawSignature, $publicKey, OPENSSL_ALGO_SHA256);
+    if ($verified !== 1) {
+        fail('Release signature verification failed.');
+    }
+}
+
+function detectCoreSource(string $source): string
+{
+    $resolved = realpath($source);
+    if ($resolved === false) {
+        fail("Source not found: {$source}");
+    }
+
+    if (is_dir($resolved . '/core/src')) {
+        return $resolved . '/core';
+    }
+
+    if (is_dir($resolved . '/src')) {
+        return $resolved;
+    }
+
+    fail('Source is not a valid core package. Expected <source>/core/src or <source>/src.');
+}
+
+function extractZipPackage(string $zipPath, string $cacheRoot): string
+{
+    if (!class_exists(ZipArchive::class)) {
+        fail('ZipArchive extension is required for extraction.');
+    }
+
+    $extractRoot = createUniqueWorkDir($cacheRoot, '.core-release-');
+
+    $zip = new ZipArchive();
+    if ($zip->open($zipPath) !== true) {
+        fail('Could not open downloaded release zip.');
+    }
+    $zip->extractTo($extractRoot);
+    $zip->close();
+
+    $dirs = glob($extractRoot . '/*', GLOB_ONLYDIR) ?: [];
+    if (count($dirs) === 1) {
+        return $dirs[0];
+    }
+
+    return $extractRoot;
+}
+
+/**
+ * @param array<string, mixed> $config
+ * @return array<string, mixed>
+ */
+function performCoreSwapUpdate(
+    string $root,
+    string $configPath,
+    array $config,
+    string $currentCorePath,
+    string $sourceCorePath,
+    string $oldVersion,
+    string $newVersion,
+    bool $createBackup,
+    bool $keepOld,
+    string $sourceLabel
+): array {
+    if (!is_dir($currentCorePath)) {
+        fail("Current core path does not exist: {$currentCorePath}");
+    }
+
+    $backupFile = null;
+    if ($createBackup) {
+        $backupDir = $root . '/backups';
+        if (!is_dir($backupDir)) {
+            mkdir($backupDir, 0775, true);
+        }
+        $backupFile = createUniqueBackupPath($backupDir, 'core-backup-', '.zip');
+        zipDirectory($currentCorePath, $backupFile);
+    }
+
+    $tmp = createUniqueWorkDir($root . '/cache', '.core-update-');
+    $old = createUniqueWorkDir($root . '/cache', '.core-old-');
+
+    copyDirectory($sourceCorePath, $tmp);
+
+    if (!rename($currentCorePath, $old)) {
+        rrmdir($tmp);
+        fail('Could not move old core out of the way.');
+    }
+
+    if (!rename($tmp, $currentCorePath)) {
+        rename($old, $currentCorePath);
+        rrmdir($tmp);
+        fail('Could not activate new core. Rolled back.');
+    }
+
+    try {
+        runCoreMigrations($root, $configPath, $currentCorePath, $oldVersion, $newVersion);
+    } catch (Throwable $e) {
+        rrmdir($currentCorePath);
+        rename($old, $currentCorePath);
+        fail('Core migrations failed: ' . $e->getMessage() . ' (core rollback applied).');
+    }
+
+    if (!$keepOld) {
+        rrmdir($old);
+    }
+
+    return [
+        'ok' => true,
+        'old_version' => $oldVersion,
+        'new_version' => $newVersion,
+        'source' => $sourceLabel,
+        'backup' => $backupFile,
+        'old_core_path' => $keepOld ? $old : null,
+    ];
+}
+
+/**
+ * @return array{applied:array<int,array<string,mixed>>}
+ */
+function runCoreMigrations(string $root, string $configPath, string $corePath, string $fromVersion, string $toVersion): array
+{
+    $statePath = $root . '/content/data/core-migrations.yaml';
+    $state = is_file($statePath) ? Yaml::parse((string) file_get_contents($statePath)) : [];
+    $state = is_array($state) ? $state : [];
+    $state['applied'] ??= [];
+
+    $appliedIds = [];
+    foreach ((array) $state['applied'] as $row) {
+        if (is_array($row) && is_string($row['id'] ?? null)) {
+            $appliedIds[$row['id']] = true;
+        }
+    }
+
+    $migrationFiles = glob(rtrim($corePath, '/') . '/migrations/*.php') ?: [];
+    sort($migrationFiles);
+
+    $config = Config::load($configPath);
+
+    foreach ($migrationFiles as $file) {
+        $def = require $file;
+        if (!is_array($def)) {
+            continue;
+        }
+
+        $id = (string) ($def['id'] ?? basename($file));
+        $target = (string) ($def['target_version'] ?? '0.0.0');
+        $up = $def['up'] ?? null;
+        if (!is_callable($up)) {
+            continue;
+        }
+
+        if (isset($appliedIds[$id])) {
+            continue;
+        }
+
+        if (!(version_compare($fromVersion, $target, '<') && version_compare($toVersion, $target, '>='))) {
+            continue;
+        }
+
+        $up([
+            'root' => $root,
+            'core_path' => $corePath,
+            'config_path' => $configPath,
+            'config' => $config,
+            'from_version' => $fromVersion,
+            'to_version' => $toVersion,
+        ]);
+
+        $state['applied'][] = [
+            'id' => $id,
+            'target_version' => $target,
+            'description' => (string) ($def['description'] ?? ''),
+            'applied_at' => date('c'),
+        ];
+        $appliedIds[$id] = true;
+    }
+
+    if (!is_dir(dirname($statePath))) {
+        mkdir(dirname($statePath), 0775, true);
+    }
+    file_put_contents($statePath, Yaml::dump($state));
+
+    return ['applied' => (array) $state['applied']];
+}
+
+/** @param array<string, mixed> $result */
+function printUpdateResult(array $result): void
+{
+    echo "Core updated successfully.\n";
+    echo "Source: " . (string) ($result['source'] ?? 'unknown') . "\n";
+    echo "Old version: " . (string) ($result['old_version'] ?? 'unknown') . "\n";
+    echo "New version: " . (string) ($result['new_version'] ?? 'unknown') . "\n";
+
+    if (is_string($result['backup'] ?? null) && $result['backup'] !== '') {
+        echo "Backup: {$result['backup']}\n";
+    }
+    if (is_string($result['old_core_path'] ?? null) && $result['old_core_path'] !== '') {
+        echo "Old core kept at: {$result['old_core_path']}\n";
+    }
+}
+
+/**
+ * @param array<int, string> $args
+ * @return array{0:string,1:string}
+ */
+function resolveRollbackSource(string $root, ?string $fromDir, ?string $fromBackup): array
+{
+    if ($fromDir !== null && $fromDir !== '') {
+        return [$fromDir, 'directory:' . $fromDir];
+    }
+
+    if ($fromBackup !== null && $fromBackup !== '') {
+        $resolved = realpath($fromBackup);
+        if ($resolved === false) {
+            fail("Rollback backup not found: {$fromBackup}");
+        }
+        if (!str_ends_with(strtolower($resolved), '.zip')) {
+            fail('Rollback backup must point to a .zip file.');
+        }
+        $extracted = extractZipPackage($resolved, $root . '/cache');
+        return [$extracted, 'backup:' . $resolved];
+    }
+
+    $events = getCoreUpdateEvents($root);
+    if ($events === []) {
+        fail('No rollback source specified and no update history found.');
+    }
+
+    for ($i = count($events) - 1; $i >= 0; $i--) {
+        $event = $events[$i];
+        $oldCorePath = (string) ($event['old_core_path'] ?? '');
+        if ($oldCorePath !== '' && is_dir($oldCorePath)) {
+            return [$oldCorePath, 'history-old-core:' . $oldCorePath];
+        }
+
+        $backup = (string) ($event['backup'] ?? '');
+        if ($backup !== '' && is_file($backup)) {
+            $extracted = extractZipPackage($backup, $root . '/cache');
+            return [$extracted, 'history-backup:' . $backup];
+        }
+    }
+
+    fail('No usable rollback source found in history. Provide --from-dir or --from-backup.');
+}
+
+/** @param array<string, mixed> $entry */
+function recordCoreUpdateEvent(string $root, array $entry): void
+{
+    $historyPath = $root . '/content/data/core-updates.yaml';
+    $history = is_file($historyPath) ? Yaml::parse((string) file_get_contents($historyPath)) : [];
+    $history = is_array($history) ? $history : [];
+    $history['events'] ??= [];
+
+    $entry['at'] = date('c');
+    $history['events'][] = $entry;
+    if (count($history['events']) > 50) {
+        $history['events'] = array_slice($history['events'], -50);
+    }
+
+    if (!is_dir(dirname($historyPath))) {
+        mkdir(dirname($historyPath), 0775, true);
+    }
+    file_put_contents($historyPath, Yaml::dump($history));
+}
+
+/** @return array<int, array<string, mixed>> */
+function getCoreUpdateEvents(string $root): array
+{
+    $historyPath = $root . '/content/data/core-updates.yaml';
+    if (!is_file($historyPath)) {
+        return [];
+    }
+
+    $history = Yaml::parse((string) file_get_contents($historyPath));
+    if (!is_array($history) || !is_array($history['events'] ?? null)) {
+        return [];
+    }
+
+    $events = [];
+    foreach ($history['events'] as $row) {
+        if (is_array($row)) {
+            $events[] = $row;
+        }
+    }
+
+    return $events;
+}
+
+function getFlagValue(array $args, string $flag): ?string
+{
+    foreach ($args as $arg) {
+        if (str_starts_with($arg, $flag . '=')) {
+            return substr($arg, strlen($flag) + 1);
+        }
+    }
+
+    return null;
+}
+
+function firstPositionalArg(array $args, int $startIndex = 1): ?string
+{
+    foreach ($args as $index => $arg) {
+        if ($index < $startIndex) {
+            continue;
+        }
+        if (!str_starts_with($arg, '--')) {
+            return $arg;
+        }
+    }
+
+    return null;
+}
+
+function resolveInstallSource(string $source, string $cacheRoot, string $kind): string
+{
+    $resolved = realpath($source);
+    if ($resolved === false) {
+        fail("{$kind} source not found: {$source}");
+    }
+
+    if (is_dir($resolved)) {
+        return rtrim($resolved, '/');
+    }
+
+    if (!str_ends_with(strtolower($resolved), '.zip')) {
+        fail("{$kind} source must be a directory or .zip archive");
+    }
+
+    if (!class_exists(ZipArchive::class)) {
+        fail('ZipArchive extension is required for zip installs.');
+    }
+
+    $extractRoot = createUniqueWorkDir($cacheRoot, '.' . $kind . '-install-');
+
+    $zip = new ZipArchive();
+    if ($zip->open($resolved) !== true) {
+        fail("Could not open zip archive: {$resolved}");
+    }
+    $zip->extractTo($extractRoot);
+    $zip->close();
+
+    $dirs = glob($extractRoot . '/*', GLOB_ONLYDIR) ?: [];
+    if (count($dirs) === 1) {
+        return $dirs[0];
+    }
+
+    return $extractRoot;
+}
+
+function normalizePackageId(string $value): string
+{
+    $slug = strtolower((string) preg_replace('/[^a-zA-Z0-9._-]/', '-', $value));
+    $slug = trim($slug, '-._');
+    return $slug !== '' ? $slug : 'package';
+}
+
+function copyDirectory(string $source, string $destination): void
+{
+    if (!is_dir($source)) {
+        fail("copyDirectory source missing: {$source}");
+    }
+
+    if (!is_dir($destination)) {
+        mkdir($destination, 0775, true);
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($source, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        $sourcePath = $item->getPathname();
+        $relative = substr($sourcePath, strlen($source) + 1);
+        $targetPath = $destination . '/' . $relative;
+
+        if ($item->isDir()) {
+            if (!is_dir($targetPath)) {
+                mkdir($targetPath, 0775, true);
+            }
+        } else {
+            $targetDir = dirname($targetPath);
+            if (!is_dir($targetDir)) {
+                mkdir($targetDir, 0775, true);
+            }
+            copy($sourcePath, $targetPath);
+        }
+    }
+}
+
+/**
+ * @param array<int, string> $excludeNames
+ */
+function copyDirectoryFiltered(string $source, string $destination, array $excludeNames): void
+{
+    if (!is_dir($source)) {
+        fail("copyDirectoryFiltered source missing: {$source}");
+    }
+
+    if (!is_dir($destination)) {
+        mkdir($destination, 0775, true);
+    }
+
+    $excludeMap = [];
+    foreach ($excludeNames as $name) {
+        $excludeMap[$name] = true;
+    }
+
+    $entries = scandir($source);
+    if ($entries === false) {
+        fail("Could not read directory: {$source}");
+    }
+
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+        if (isset($excludeMap[$entry])) {
+            continue;
+        }
+
+        $from = $source . '/' . $entry;
+        $to = $destination . '/' . $entry;
+
+        if (is_link($from) || is_file($from)) {
+            $targetDir = dirname($to);
+            if (!is_dir($targetDir)) {
+                mkdir($targetDir, 0775, true);
+            }
+            if (!copy($from, $to)) {
+                fail("Could not copy file: {$from}");
+            }
+            continue;
+        }
+
+        if (is_dir($from)) {
+            if (!is_dir($to) && !mkdir($to, 0775, true) && !is_dir($to)) {
+                fail("Could not create directory: {$to}");
+            }
+            copyDirectoryFiltered($from, $to, $excludeNames);
+        }
+    }
+}
+
+function rrmdir(string $dir): void
+{
+    if (!is_dir($dir)) {
+        return;
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        if ($item->isDir()) {
+            rmdir($item->getPathname());
+        } else {
+            unlink($item->getPathname());
+        }
+    }
+
+    rmdir($dir);
+}
+
+function zipDirectory(string $sourceDir, string $zipPath): void
+{
+    if (!class_exists(ZipArchive::class)) {
+        fail('ZipArchive extension is required for backup creation.');
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        fail("Could not create backup zip: {$zipPath}");
+    }
+
+    $base = realpath($sourceDir);
+    if ($base === false) {
+        fail("Backup source not found: {$sourceDir}");
+    }
+
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($base, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $item) {
+        $real = $item->getRealPath();
+        if ($real === false) {
+            continue;
+        }
+        $relative = substr($real, strlen($base) + 1);
+        if ($item->isDir()) {
+            $zip->addEmptyDir($relative);
+        } else {
+            $zip->addFile($real, $relative);
+        }
+    }
+
+    $zip->close();
+}
+
+function fetchRemoteText(string $url, int $timeout): string
+{
+    $context = stream_context_create([
+        'http' => [
+            'timeout' => $timeout,
+            'follow_location' => 1,
+            'max_redirects' => 3,
+            'user_agent' => 'atoll-cms-updater/0.1',
+        ],
+    ]);
+
+    $raw = @file_get_contents($url, false, $context);
+    if (!is_string($raw)) {
+        fail("Could not fetch URL: {$url}");
+    }
+
+    return $raw;
+}
+
+function fetchRemoteBinary(string $url, int $timeout): string
+{
+    return fetchRemoteText($url, $timeout);
+}
+
+function createUniqueBackupPath(string $backupDir, string $prefix, string $suffix): string
+{
+    $tries = 0;
+    do {
+        $token = date('Ymd-His') . '-' . bin2hex(random_bytes(3));
+        $path = rtrim($backupDir, '/') . '/' . $prefix . $token . $suffix;
+        $tries++;
+    } while (is_file($path) && $tries < 10);
+
+    return $path;
+}
+
+function createUniqueWorkDir(string $baseDir, string $prefix): string
+{
+    if (!is_dir($baseDir)) {
+        mkdir($baseDir, 0775, true);
+    }
+
+    $tries = 0;
+    do {
+        $token = date('Ymd-His') . '-' . bin2hex(random_bytes(3));
+        $path = rtrim($baseDir, '/') . '/' . $prefix . $token;
+        $tries++;
+    } while (is_dir($path) && $tries < 20);
+
+    if (!mkdir($path, 0775, true) && !is_dir($path)) {
+        fail('Could not create temporary work directory: ' . $path);
+    }
+
+    return $path;
+}

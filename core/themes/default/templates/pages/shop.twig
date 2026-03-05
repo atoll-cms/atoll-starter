@@ -1,0 +1,193 @@
+{% extends 'layouts/base.twig' %}
+
+{% block content %}
+  <section class="hero">
+    <h1>{{ page.title }}</h1>
+    {% if page.content %}
+      <div class="lead">{{ page.content|raw }}</div>
+    {% endif %}
+  </section>
+
+  <section>
+    <div class="section-heading">
+      <h2>Produkte</h2>
+      <p>Der Katalog wird ueber das Shop-Plugin geladen.</p>
+    </div>
+    <div id="shop-grid" class="grid-3">
+      <article class="card">
+        <h3>Lade Produkte...</h3>
+        <p>Bitte warten.</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-heading">
+      <h2>Warenkorb</h2>
+      <p>Session-basiert ueber Cookie. Checkout erzeugt eine Order-Intent im Backend.</p>
+    </div>
+    <article id="shop-cart" class="card">
+      <p>Dein Warenkorb ist leer.</p>
+    </article>
+    <p style="margin-top: 1rem; display: flex; gap: .75rem; flex-wrap: wrap;">
+      <button id="shop-clear" class="btn btn--outline" type="button">Warenkorb leeren</button>
+      <button id="shop-checkout" class="btn btn--primary" type="button">Checkout starten</button>
+    </p>
+  </section>
+
+  <script>
+    (() => {
+      const endpoint = {
+        products: "{{ url('/shop/products.json') }}",
+        cart: "{{ url('/shop/cart') }}",
+        add: "{{ url('/shop/cart/add') }}",
+        clear: "{{ url('/shop/cart/clear') }}",
+        checkout: "{{ url('/shop/checkout/intent') }}"
+      };
+
+      const grid = document.getElementById('shop-grid');
+      const cartBox = document.getElementById('shop-cart');
+      const clearBtn = document.getElementById('shop-clear');
+      const checkoutBtn = document.getElementById('shop-checkout');
+
+      const api = async (url, options = {}) => {
+        const method = options.method || 'GET';
+        const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+        const response = await fetch(url, {
+          method,
+          headers,
+          credentials: 'same-origin',
+          body: options.body || null
+        });
+
+        const data = await response.json().catch(() => ({ ok: false, error: 'Invalid JSON response' }));
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.error || ('HTTP ' + response.status));
+        }
+
+        return data;
+      };
+
+      const formatMoney = (value, currency) => {
+        const amount = Number(value || 0);
+        return amount.toFixed(2) + ' ' + (currency || 'EUR');
+      };
+
+      const renderCart = (cart) => {
+        const items = Array.isArray(cart.items) ? cart.items : [];
+        if (items.length === 0) {
+          cartBox.innerHTML = '<p>Dein Warenkorb ist leer.</p>';
+          return;
+        }
+
+        const list = document.createElement('ul');
+        list.style.margin = '0';
+        list.style.paddingLeft = '1.2rem';
+
+        for (const item of items) {
+          const li = document.createElement('li');
+          li.textContent = item.title + ' x ' + item.quantity + ' - ' + formatMoney(item.line_total, item.currency);
+          list.appendChild(li);
+        }
+
+        cartBox.innerHTML = '';
+        cartBox.appendChild(list);
+
+        const total = document.createElement('p');
+        total.style.marginTop = '1rem';
+        total.innerHTML = '<strong>Summe: ' + formatMoney(cart.subtotal, cart.currency) + '</strong>';
+        cartBox.appendChild(total);
+      };
+
+      const loadCart = async () => {
+        try {
+          const data = await api(endpoint.cart);
+          renderCart(data.cart || {});
+        } catch (error) {
+          cartBox.innerHTML = '<p>Warenkorb konnte nicht geladen werden: ' + error.message + '</p>';
+        }
+      };
+
+      const loadProducts = async () => {
+        try {
+          const data = await api(endpoint.products);
+          const products = Array.isArray(data.products) ? data.products : [];
+          if (products.length === 0) {
+            grid.innerHTML = '<article class="card"><h3>Keine Produkte</h3><p>Lege Dateien unter <code>content/shop/*.md</code> an.</p></article>';
+            return;
+          }
+
+          grid.innerHTML = '';
+          for (const product of products) {
+            const article = document.createElement('article');
+            article.className = 'card';
+
+            const title = document.createElement('h3');
+            title.textContent = product.title || product.slug;
+            article.appendChild(title);
+
+            const excerpt = document.createElement('p');
+            excerpt.textContent = product.excerpt || '';
+            article.appendChild(excerpt);
+
+            const price = document.createElement('p');
+            price.innerHTML = '<strong>' + formatMoney(product.price, product.currency) + '</strong>';
+            article.appendChild(price);
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn--primary';
+            button.textContent = 'In den Warenkorb';
+            button.addEventListener('click', async () => {
+              button.disabled = true;
+              try {
+                const payload = JSON.stringify({ slug: product.slug, quantity: 1 });
+                const result = await api(endpoint.add, { method: 'POST', body: payload });
+                renderCart(result.cart || {});
+              } catch (error) {
+                alert('Konnte Produkt nicht hinzufuegen: ' + error.message);
+              } finally {
+                button.disabled = false;
+              }
+            });
+            article.appendChild(button);
+
+            grid.appendChild(article);
+          }
+        } catch (error) {
+          grid.innerHTML = '<article class="card"><h3>Fehler</h3><p>' + error.message + '</p></article>';
+        }
+      };
+
+      clearBtn?.addEventListener('click', async () => {
+        try {
+          const result = await api(endpoint.clear, { method: 'POST', body: '{}' });
+          renderCart(result.cart || {});
+        } catch (error) {
+          alert('Warenkorb konnte nicht geleert werden: ' + error.message);
+        }
+      });
+
+      checkoutBtn?.addEventListener('click', async () => {
+        checkoutBtn.disabled = true;
+        try {
+          const result = await api(endpoint.checkout, { method: 'POST', body: '{}' });
+          await loadCart();
+          const target = result.checkout_url || '';
+          if (target) {
+            window.location.href = target;
+            return;
+          }
+          alert('Checkout-Intent erstellt: ' + result.order_id);
+        } catch (error) {
+          alert('Checkout fehlgeschlagen: ' + error.message);
+        } finally {
+          checkoutBtn.disabled = false;
+        }
+      });
+
+      loadProducts();
+      loadCart();
+    })();
+  </script>
+{% endblock %}

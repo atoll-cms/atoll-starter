@@ -1,14 +1,29 @@
 {% extends 'layouts/base.twig' %}
 
 {% block content %}
-  <article>
-    <h1>{{ page.title }}</h1>
-    <p class="meta">{{ page.date }} · {{ page.author|default('Admin') }}</p>
+  <article class="container--narrow" style="margin-inline: auto;">
+    <header style="margin-bottom: var(--space-xl);">
+      <h1>{{ page.title }}</h1>
+      <div class="meta">
+        <time datetime="{{ page.date }}">{{ page.date }}</time>
+        <span class="separator" aria-hidden="true"></span>
+        <span>{{ page.author|default('Admin') }}</span>
+        {% if page.tags is defined and page.tags %}
+          <span class="separator" aria-hidden="true"></span>
+          {% for tag in page.tags %}
+            <span class="tag">{{ tag }}</span>
+          {% endfor %}
+        {% endif %}
+      </div>
+    </header>
+
     <div class="prose">{{ page.content|raw }}</div>
   </article>
 
-  <section>
-    <h2>Gallery Island</h2>
-    {{ island('ImageGallery', { client: 'idle', props: { images: page.gallery|default([]) } })|raw }}
-  </section>
+  {% if page.gallery is defined and page.gallery|length > 0 %}
+    <section style="margin-top: var(--space-2xl);">
+      <h2>Galerie</h2>
+      {{ island('ImageGallery', { client: 'idle', props: { images: page.gallery|default([]) } })|raw }}
+    </section>
+  {% endif %}
 {% endblock %}

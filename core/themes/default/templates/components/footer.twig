@@ -1,6 +1,30 @@
-<footer class="site-footer">
-  <div class="container row between">
-    <p>&copy; {{ "now"|date("Y") }} atoll-cms</p>
-    <p><a href="{{ url('/sitemap.xml') }}">Sitemap</a> · <a href="{{ url('/robots.txt') }}">Robots</a></p>
+<footer class="site-footer" role="contentinfo">
+  <div class="container">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand">{{ site.name|default('atoll') }}</div>
+        <p class="footer-desc">Ein modernes, leichtgewichtiges CMS fuer PHP &mdash; ohne Datenbank, ohne Build-Step, ohne Kompromisse.</p>
+      </div>
+      <div>
+        <div class="footer-heading">Navigation</div>
+        <ul class="footer-links">
+          {% for item in navigation %}
+            <li><a href="{{ url(item.url|default('/')) }}">{{ item.label }}</a></li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div>
+        <div class="footer-heading">Meta</div>
+        <ul class="footer-links">
+          <li><a href="{{ url('/sitemap.xml') }}">Sitemap</a></li>
+          <li><a href="{{ url('/robots.txt') }}">Robots</a></li>
+          <li><a href="{{ url('/admin') }}">Admin</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; {{ "now"|date("Y") }} {{ site.name|default('atoll-cms') }}. Alle Rechte vorbehalten.</p>
+      <p>Powered by <a href="https://github.com/atoll-cms">Atoll CMS</a></p>
+    </div>
   </div>
 </footer>

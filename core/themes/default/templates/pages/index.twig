@@ -1,22 +1,47 @@
 {% extends 'layouts/base.twig' %}
 
 {% block content %}
-  <h1>{{ page.title }}</h1>
-  <article class="prose">{{ page.content|raw }}</article>
+  <section class="hero">
+    <h1 class="animate-in">{{ page.title }}</h1>
+    {% if page.content %}
+      <div class="lead animate-in">{{ page.content|raw }}</div>
+    {% endif %}
+  </section>
 
-  <section class="grid-2">
-    <div class="card">
-      <h2>Zero JS by default</h2>
-      <p>Statisches HTML wird direkt ausgeliefert. Interaktivitaet nur als Island bei Bedarf.</p>
+  <section>
+    <div class="section-heading animate-in">
+      <h2>Warum Atoll?</h2>
+      <p>Alles, was ein modernes CMS braucht &mdash; nichts, was es nicht braucht.</p>
     </div>
-    <div class="card">
-      <h2>Shared Hosting ready</h2>
-      <p>PHP 8.2+, kein Node auf dem Server, kein Build-Step im Betrieb.</p>
+    <div class="grid-3">
+      <div class="card animate-in">
+        <div class="card__icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </div>
+        <h3>Zero JS by default</h3>
+        <p>Statisches HTML wird direkt ausgeliefert. Interaktivitaet nur als Island bei Bedarf.</p>
+      </div>
+      <div class="card animate-in">
+        <div class="card__icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <h3>Shared Hosting ready</h3>
+        <p>PHP 8.2+, kein Node auf dem Server, kein Build-Step im Betrieb.</p>
+      </div>
+      <div class="card animate-in">
+        <div class="card__icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <h3>Sicher &amp; schlank</h3>
+        <p>Flat-File-Architektur, CSRF-Schutz, Rate-Limiting und 2FA &mdash; alles eingebaut.</p>
+      </div>
     </div>
   </section>
 
   <section>
-    <h2>Instant Search Island</h2>
+    <div class="section-heading">
+      <h2>Suche</h2>
+    </div>
     {{ island('SearchWidget', { client: 'load', props: { placeholder: 'Suche Artikel...' } })|raw }}
   </section>
 {% endblock %}

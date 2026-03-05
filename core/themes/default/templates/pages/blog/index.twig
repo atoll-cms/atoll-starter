@@ -1,16 +1,26 @@
 {% extends 'layouts/base.twig' %}
 
 {% block content %}
-  <h1>Blog</h1>
+  <section class="hero" style="padding-bottom: var(--space-lg);">
+    <h1>Blog</h1>
+    <p class="lead">Neuigkeiten, Tutorials und Einblicke rund um Atoll CMS.</p>
+  </section>
+
   <div class="post-list">
     {% for item in items %}
-      <article class="post-card">
+      <article class="post-card animate-in">
+        <div class="meta">
+          <time datetime="{{ item.date }}">{{ item.date }}</time>
+          <span class="separator" aria-hidden="true"></span>
+          <span>{{ item.author|default('Admin') }}</span>
+        </div>
         <h2><a href="{{ url(item.url) }}">{{ item.title }}</a></h2>
-        <p class="meta">{{ item.date }} · {{ item.author|default('Admin') }}</p>
         <p>{{ item.excerpt }}</p>
       </article>
     {% else %}
-      <p>Noch keine Beitraege vorhanden.</p>
+      <div class="card" style="text-align: center; padding: var(--space-3xl);">
+        <p style="color: var(--muted);">Noch keine Beitraege vorhanden.</p>
+      </div>
     {% endfor %}
   </div>
 {% endblock %}

@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace Atoll\Support;
 
-use League\CommonMark\CommonMarkConverter;
+use League\CommonMark\GithubFlavoredMarkdownConverter;
 
 final class Markdown
 {
     public static function toHtml(string $markdown): string
     {
-        if (class_exists(CommonMarkConverter::class)) {
-            $converter = new CommonMarkConverter([
+        if (class_exists(GithubFlavoredMarkdownConverter::class)) {
+            $converter = new GithubFlavoredMarkdownConverter([
                 'html_input' => 'allow',
                 'allow_unsafe_links' => false,
             ]);

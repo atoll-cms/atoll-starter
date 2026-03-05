@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, json, gd, openssl, zip
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Validate composer
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist
+
+      - name: PHP lint
+        run: |
+          while IFS= read -r file; do
+            php -l "$file"
+          done < <(find src migrations tools installer -name '*.php' -type f)
+
+      - name: JS syntax check
+        run: |
+          node --check assets/js/island-loader.js
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find admin/assets islands/dist -name '*.js' -type f -print0)
+
+      - name: Build release smoke test
+        run: |
+          php tools/build-release.php /tmp/releases
+          ls -la /tmp/releases

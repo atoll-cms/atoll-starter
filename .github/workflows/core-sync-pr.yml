@@ -1,0 +1,38 @@
+name: Core Sync PR
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone upstream atoll-core
+        run: git clone --depth 1 https://github.com/atoll-cms/atoll-core.git /tmp/atoll-core
+
+      - name: Sync bundled core
+        run: ./scripts/sync-core-from-upstream.sh /tmp/atoll-core
+
+      - name: Create pull request if changed
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(core): sync bundled core from atoll-core main"
+          title: "chore(core): sync bundled core from atoll-core main"
+          body: |
+            Automated sync of bundled `core/` from `atoll-cms/atoll-core` (main).
+
+            This PR was created automatically to prevent core drift.
+          branch: "chore/auto-sync-core"
+          delete-branch: true
+          labels: |
+            automated
+            core-sync

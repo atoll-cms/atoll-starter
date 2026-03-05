@@ -1,0 +1,21 @@
+name: Core Drift Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone upstream atoll-core
+        run: git clone --depth 1 https://github.com/atoll-cms/atoll-core.git /tmp/atoll-core
+
+      - name: Verify bundled core is synced
+        run: ./scripts/sync-core-from-upstream.sh --check /tmp/atoll-core

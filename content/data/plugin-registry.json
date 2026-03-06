@@ -84,7 +84,7 @@
     "id": "booking-pro",
     "name": "Booking Pro",
     "type": "marketplace",
-    "description": "Terminbuchung mit Slot-Management, E-Mail-Benachrichtigungen und iCal-Export.",
+    "description": "Appointment booking with slot management, calendar admin UI, email notifications, and iCal export.",
     "source": "plugins/booking-pro",
     "seller": "atoll labs",
     "price_eur": 89,

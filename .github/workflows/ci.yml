@@ -57,3 +57,9 @@ jobs:
           sleep 1
           curl -fsS http://127.0.0.1:8088/ >/tmp/home.html || { cat /tmp/server.log; exit 1; }
           curl -fsS http://127.0.0.1:8088/admin >/tmp/admin.html || { cat /tmp/server.log; exit 1; }
+
+      - name: Static export smoke
+        run: |
+          ATOLL_EXPORT_BASE_URL=https://atoll-cms.github.io/atoll-starter php scripts/export-static.php dist
+          test -f dist/index.html
+          test -f dist/sitemap.xml

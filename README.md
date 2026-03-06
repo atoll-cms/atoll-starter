@@ -6,6 +6,12 @@ atoll-cms ist ein modernes Flat-File-CMS auf PHP 8.2+, das Astro-Prinzipien (Isl
 
 - **Source of Truth:** [docs/ATOLL_CONCEPT_ORIGINAL.md](docs/ATOLL_CONCEPT_ORIGINAL.md)
 
+## Launch Surface
+
+- Live demo site (GitHub Pages): https://atoll-cms.github.io/atoll-starter
+- Landing website: https://atoll-cms.github.io/atoll-website
+- Documentation: https://atoll-cms.github.io/atoll-docs
+
 ## Architektur: Core vs Site
 
 Der austauschbare Unterbau liegt in `core/`.
@@ -67,6 +73,18 @@ Alternativen:
 - `composer dev-local -- --setup-only` setzt nur den lokalen Core-Pfad (ohne Serverstart).
 - `php bin/atoll core:sync` synchronisiert den gebuendelten `./core`-Ordner aus `core.path` (oder `../atoll-core`), damit Starter-Core und externer Core nicht auseinanderlaufen.
 - In `environment: dev` ist HTML-Cache standardmaessig deaktiviert, damit Theme-/Template-Aenderungen sofort sichtbar sind. Optional wieder aktivierbar mit `cache.dev_enabled: true`.
+
+### Static export (for demo/hosting)
+
+```bash
+php scripts/export-static.php dist
+```
+
+For subpath deployments:
+
+```bash
+ATOLL_EXPORT_BASE_URL=\"https://atoll-cms.github.io/atoll-starter\" php scripts/export-static.php dist
+```
 
 ### Static-Site Performance Profil
 

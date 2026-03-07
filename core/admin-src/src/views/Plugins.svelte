@@ -6,6 +6,7 @@
   let installEnable = $state(true);
   let busy = $state({});
   let licenseByPlugin = $state({});
+  let buyerByPlugin = $state({});
 
   function setBusy(id, value) {
     busy = { ...busy, [id]: value };
@@ -20,8 +21,26 @@
     return !!row?.requires_license;
   }
 
+  function isPaid(row) {
+    const value = Number(row?.price_eur ?? 0);
+    return Number.isFinite(value) && value > 0;
+  }
+
   function hasStoredLicense(row) {
     return !!row?.has_license;
+  }
+
+  function hasUsableLicense(row) {
+    if (!hasStoredLicense(row)) return false;
+    return row?.license_valid !== false;
+  }
+
+  function licenseWarning(row) {
+    if (row?.license_valid === false) {
+      const reason = String(row?.license_reason || 'invalid');
+      return `Gespeicherte Lizenz ist ungueltig (${reason}).`;
+    }
+    return '';
   }
 
   async function refreshPluginData() {
@@ -56,7 +75,7 @@
     if (!id || busy[`install-${id}`]) return;
 
     const licenseKey = String(licenseByPlugin[id] || '').trim();
-    if (needsLicense(row) && !hasStoredLicense(row) && licenseKey === '') {
+    if (needsLicense(row) && !hasUsableLicense(row) && licenseKey === '') {
       addToast('Dieses Plugin benoetigt einen Lizenzschluessel.', 'error');
       return;
     }
@@ -79,6 +98,44 @@
       addToast(err.message, 'error');
     } finally {
       setBusy(`install-${id}`, false);
+    }
+  }
+
+  async function purchasePluginLicense(row) {
+    const id = row?.id;
+    if (!id || busy[`purchase-${id}`]) return;
+
+    const buyer = buyerByPlugin[id] || {};
+    const buyerEmail = String(buyer?.email || '').trim();
+    const buyerName = String(buyer?.name || '').trim();
+    if (buyerEmail === '') {
+      addToast('Bitte eine Buyer-E-Mail eingeben.', 'error');
+      return;
+    }
+
+    setBusy(`purchase-${id}`, true);
+    try {
+      const result = await api('/admin/api/marketplace/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'plugin',
+          id,
+          buyer_email: buyerEmail,
+          buyer_name: buyerName
+        })
+      });
+
+      const key = String(result?.purchase?.license_key || '').trim();
+      if (key !== '') {
+        licenseByPlugin = { ...licenseByPlugin, [id]: key };
+      }
+      await refreshPluginData();
+      addToast('Lizenz gekauft und gespeichert.', 'success');
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setBusy(`purchase-${id}`, false);
     }
   }
 
@@ -171,7 +228,11 @@
             {/if}
 
             {#if !p.installed}
-              {#if needsLicense(p) && !hasStoredLicense(p)}
+              {#if needsLicense(p) && licenseWarning(p) !== ''}
+                <p class="license-warning">{licenseWarning(p)}</p>
+              {/if}
+
+              {#if needsLicense(p) && !hasUsableLicense(p)}
                 <div class="license-row">
                   <input
                     type="text"
@@ -185,7 +246,41 @@
                 </div>
               {/if}
 
+              {#if isPaid(p) && (!needsLicense(p) || !hasUsableLicense(p))}
+                <div class="buyer-grid">
+                  <input
+                    type="text"
+                    placeholder="Buyer name (optional)"
+                    value={buyerByPlugin[p.id]?.name || ''}
+                    oninput={(event) => {
+                      const value = event.currentTarget?.value || '';
+                      buyerByPlugin = {
+                        ...buyerByPlugin,
+                        [p.id]: { ...(buyerByPlugin[p.id] || {}), name: value }
+                      };
+                    }}
+                  >
+                  <input
+                    type="email"
+                    placeholder="Buyer email"
+                    value={buyerByPlugin[p.id]?.email || ''}
+                    oninput={(event) => {
+                      const value = event.currentTarget?.value || '';
+                      buyerByPlugin = {
+                        ...buyerByPlugin,
+                        [p.id]: { ...(buyerByPlugin[p.id] || {}), email: value }
+                      };
+                    }}
+                  >
+                </div>
+              {/if}
+
               <div class="card-actions">
+                {#if isPaid(p) && (!needsLicense(p) || !hasUsableLicense(p))}
+                  <button class="buy-btn" disabled={!!busy[`purchase-${p.id}`]} onclick={() => purchasePluginLicense(p)}>
+                    {busy[`purchase-${p.id}`] ? 'Kaufe...' : 'Kaufen & Lizenz'}
+                  </button>
+                {/if}
                 <button class="install-btn" disabled={!!busy[`install-${p.id}`]} onclick={() => installFromRegistry(p)}>
                   {busy[`install-${p.id}`] ? 'Installiere...' : 'Installieren'}
                 </button>
@@ -371,6 +466,28 @@
     font-size: 0.85rem;
   }
 
+  .buyer-grid {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .buyer-grid input {
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #0a1518;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+  }
+
+  .license-warning {
+    margin: 0;
+    color: #fda4af;
+    font-size: 0.78rem;
+  }
+
   .card-actions {
     display: flex;
     gap: 0.5rem;
@@ -378,7 +495,8 @@
   }
 
   .install-btn,
-  .submit-btn {
+  .submit-btn,
+  .buy-btn {
     padding: 0.42rem 0.75rem;
     background: var(--brand);
     border: none;
@@ -391,6 +509,16 @@
   }
 
   .install-btn:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+  }
+
+  .buy-btn {
+    background: #22c55e;
+    color: #07210f;
+  }
+
+  .buy-btn:disabled {
     opacity: 0.65;
     cursor: not-allowed;
   }

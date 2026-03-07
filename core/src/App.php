@@ -265,7 +265,32 @@ final class App
             'navigation' => $content->readDataFile('navigation.yaml'),
         ];
 
-        $hooks->run('page:before_render', $payload, $request);
+        foreach ($hooks->run('page:before_render', $payload, $request) as $result) {
+            if ($result instanceof Response) {
+                return $security->applyHeaders($result);
+            }
+
+            if (!is_array($result)) {
+                continue;
+            }
+
+            $hookResponse = $result['response'] ?? null;
+            if ($hookResponse instanceof Response) {
+                return $security->applyHeaders($hookResponse);
+            }
+
+            $hookPayload = $result['payload'] ?? null;
+            if (!is_array($hookPayload)) {
+                continue;
+            }
+
+            foreach ($hookPayload as $key => $value) {
+                if (is_string($key) && $key !== '') {
+                    $payload[$key] = $value;
+                }
+            }
+        }
+
         $html = $templates->render((string) $resolved['template'], $payload);
         $html = $islands->process($html);
 

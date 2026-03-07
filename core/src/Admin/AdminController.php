@@ -134,6 +134,9 @@ final class AdminController
             $endpoint === '/plugin-registry' && $request->method === 'GET' => $this->pluginRegistry(),
             $endpoint === '/plugin-page' && $request->method === 'GET' => $this->pluginPage($request),
             $endpoint === '/theme-registry' && $request->method === 'GET' => $this->themeRegistry(),
+            $endpoint === '/marketplace/orders' && $request->method === 'GET' => $this->marketplaceOrders($request),
+            $endpoint === '/marketplace/purchase' && $request->method === 'POST' => $this->marketplacePurchase($request),
+            $endpoint === '/marketplace/license/verify' && $request->method === 'POST' => $this->marketplaceLicenseVerify($request),
             $endpoint === '/plugins/toggle' && $request->method === 'POST' => $this->togglePlugin($request),
             $endpoint === '/plugins/install' && $request->method === 'POST' => $this->installPlugin($request),
             $endpoint === '/themes' && $request->method === 'GET' => $this->themes(),
@@ -570,9 +573,16 @@ final class AdminController
             if ($id === '') {
                 continue;
             }
+            $storedLicense = trim((string) ($licenses['plugins'][$id] ?? ''));
+            $requiresLicense = (bool) ($entry['requires_license'] ?? false);
             $entry['installed'] = (bool) ($pluginState[$id]['installed'] ?? false);
             $entry['active'] = (bool) ($pluginState[$id]['active'] ?? false);
-            $entry['has_license'] = trim((string) ($licenses['plugins'][$id] ?? '')) !== '';
+            $entry['has_license'] = $storedLicense !== '';
+            if ($requiresLicense && $storedLicense !== '') {
+                $verification = PackageInstaller::verifyMarketplaceLicense($this->root, 'plugins', $id, $storedLicense);
+                $entry['license_valid'] = (bool) ($verification['valid'] ?? false);
+                $entry['license_reason'] = (string) ($verification['reason'] ?? '');
+            }
         }
         unset($entry);
 
@@ -594,15 +604,80 @@ final class AdminController
             if ($id === '') {
                 continue;
             }
+            $storedLicense = trim((string) ($licenses['themes'][$id] ?? ''));
+            $requiresLicense = (bool) ($entry['requires_license'] ?? false);
             $entry['installed'] = isset($themes[$id]);
             $entry['active'] = (bool) ($themes[$id]['active'] ?? false);
-            $entry['has_license'] = trim((string) ($licenses['themes'][$id] ?? '')) !== '';
+            $entry['has_license'] = $storedLicense !== '';
+            if ($requiresLicense && $storedLicense !== '') {
+                $verification = PackageInstaller::verifyMarketplaceLicense($this->root, 'themes', $id, $storedLicense);
+                $entry['license_valid'] = (bool) ($verification['valid'] ?? false);
+                $entry['license_reason'] = (string) ($verification['reason'] ?? '');
+            }
         }
         unset($entry);
 
         return Response::json([
             'ok' => true,
             'registry' => $registry,
+        ]);
+    }
+
+    private function marketplaceOrders(Request $request): Response
+    {
+        $limit = (int) $request->input('limit', 200);
+        $limit = max(1, min(1000, $limit));
+
+        return Response::json([
+            'ok' => true,
+            'orders' => PackageInstaller::marketplaceOrders($this->root, $limit),
+        ]);
+    }
+
+    private function marketplacePurchase(Request $request): Response
+    {
+        $payload = $request->isJson() ? $request->json() : $request->post;
+        $kind = trim((string) ($payload['kind'] ?? ''));
+        $id = trim((string) ($payload['id'] ?? ''));
+        $buyerEmail = trim((string) ($payload['buyer_email'] ?? ''));
+        $buyerName = trim((string) ($payload['buyer_name'] ?? ''));
+
+        try {
+            $result = PackageInstaller::purchaseMarketplaceItem($this->root, $kind, $id, $buyerEmail, $buyerName);
+        } catch (RuntimeException $e) {
+            return Response::json(['error' => $e->getMessage()], 422);
+        }
+
+        $this->security->recordAudit('marketplace.purchase', [
+            'user' => $this->security->currentUser(),
+            'kind' => $kind,
+            'id' => $id,
+            'buyer_email' => $buyerEmail,
+            'order_id' => $result['order']['order_id'] ?? null,
+        ]);
+
+        return Response::json([
+            'ok' => true,
+            'purchase' => $result,
+        ]);
+    }
+
+    private function marketplaceLicenseVerify(Request $request): Response
+    {
+        $payload = $request->isJson() ? $request->json() : $request->post;
+        $kind = trim((string) ($payload['kind'] ?? ''));
+        $id = trim((string) ($payload['id'] ?? ''));
+        $licenseKey = trim((string) ($payload['license_key'] ?? ''));
+
+        try {
+            $verification = PackageInstaller::verifyMarketplaceLicense($this->root, $kind, $id, $licenseKey);
+        } catch (RuntimeException $e) {
+            return Response::json(['error' => $e->getMessage()], 422);
+        }
+
+        return Response::json([
+            'ok' => true,
+            'verification' => $verification,
         ]);
     }
 

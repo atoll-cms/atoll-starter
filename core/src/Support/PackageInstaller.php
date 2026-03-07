@@ -170,6 +170,203 @@ final class PackageInstaller
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    public static function purchaseMarketplaceItem(
+        string $root,
+        string $kind,
+        string $id,
+        string $buyerEmail,
+        string $buyerName = ''
+    ): array {
+        $group = self::normalizeLicenseGroupKind($kind);
+        $normalizedId = self::normalizePackageId($id);
+        if ($normalizedId === '') {
+            throw new RuntimeException('Marketplace item id cannot be empty.');
+        }
+
+        $email = strtolower(trim($buyerEmail));
+        if ($email === '' || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+            throw new RuntimeException('Valid buyer email is required.');
+        }
+
+        $registryEntry = self::findRegistryEntry(self::registryFileForGroup($root, $group), $normalizedId);
+        $price = is_numeric($registryEntry['price_eur'] ?? null) ? (float) $registryEntry['price_eur'] : 0.0;
+        $type = strtolower(trim((string) ($registryEntry['type'] ?? '')));
+        $requiresLicense = (bool) ($registryEntry['requires_license'] ?? false);
+
+        if (!$requiresLicense && $price <= 0 && $type !== 'marketplace') {
+            throw new RuntimeException("Item '{$normalizedId}' is not configured as paid marketplace product.");
+        }
+
+        $licenseKey = '';
+        $issued = self::loadMarketplaceIssuedLicenses($root);
+        for ($i = 0; $i < 20; $i++) {
+            $candidate = self::generateMarketplaceLicenseKey($group, $normalizedId);
+            if (!isset($issued[$candidate])) {
+                $licenseKey = $candidate;
+                break;
+            }
+        }
+        if ($licenseKey === '') {
+            throw new RuntimeException('Could not allocate unique license key.');
+        }
+
+        $now = date('c');
+        $ttlDays = is_numeric($registryEntry['license_ttl_days'] ?? null) ? (int) $registryEntry['license_ttl_days'] : 0;
+        $expiresAt = $ttlDays > 0 ? date('c', time() + ($ttlDays * 86400)) : null;
+        $record = [
+            'license_key' => $licenseKey,
+            'group' => $group,
+            'id' => $normalizedId,
+            'status' => 'active',
+            'buyer_email' => $email,
+            'buyer_name' => trim($buyerName),
+            'issued_at' => $now,
+            'expires_at' => $expiresAt,
+            'price_eur' => round($price, 2),
+            'seller' => (string) ($registryEntry['seller'] ?? 'unknown'),
+        ];
+        $issued[$licenseKey] = $record;
+        self::saveMarketplaceIssuedLicenses($root, $issued);
+
+        $order = [
+            'order_id' => 'mkt_' . date('YmdHis') . '_' . random_int(1000, 9999),
+            'created_at' => $now,
+            'status' => 'paid',
+            'group' => $group,
+            'id' => $normalizedId,
+            'name' => (string) ($registryEntry['name'] ?? $normalizedId),
+            'price_eur' => round($price, 2),
+            'currency' => (string) ($registryEntry['currency'] ?? 'EUR'),
+            'buyer' => [
+                'email' => $email,
+                'name' => trim($buyerName),
+            ],
+            'license_key' => $licenseKey,
+        ];
+        self::appendMarketplaceOrder($root, $order);
+
+        self::setStoredLicense($root, $group, $normalizedId, $licenseKey);
+
+        return [
+            'ok' => true,
+            'order' => $order,
+            'license_key' => $licenseKey,
+            'product' => [
+                'group' => $group,
+                'id' => $normalizedId,
+                'name' => (string) ($registryEntry['name'] ?? $normalizedId),
+            ],
+        ];
+    }
+
+    /**
+     * @return array{ok:bool,valid:bool,reason?:string,record?:array<string,mixed>}
+     */
+    public static function verifyMarketplaceLicense(
+        string $root,
+        string $kind,
+        string $id,
+        string $licenseKey
+    ): array {
+        $group = self::normalizeLicenseGroupKind($kind);
+        $normalizedId = self::normalizePackageId($id);
+        $licenseKey = strtoupper(trim($licenseKey));
+        if ($licenseKey === '') {
+            return [
+                'ok' => true,
+                'valid' => false,
+                'reason' => 'empty',
+            ];
+        }
+
+        $issued = self::loadMarketplaceIssuedLicenses($root);
+        $record = $issued[$licenseKey] ?? null;
+        if (!is_array($record)) {
+            return [
+                'ok' => true,
+                'valid' => false,
+                'reason' => 'not_found',
+            ];
+        }
+
+        $recordGroup = strtolower(trim((string) ($record['group'] ?? '')));
+        $recordId = self::normalizePackageId((string) ($record['id'] ?? ''));
+        if ($recordGroup !== $group || $recordId !== $normalizedId) {
+            return [
+                'ok' => true,
+                'valid' => false,
+                'reason' => 'mismatch',
+            ];
+        }
+
+        $status = strtolower(trim((string) ($record['status'] ?? 'active')));
+        if ($status !== 'active') {
+            return [
+                'ok' => true,
+                'valid' => false,
+                'reason' => 'inactive',
+            ];
+        }
+
+        $expiresAt = trim((string) ($record['expires_at'] ?? ''));
+        if ($expiresAt !== '') {
+            $ts = strtotime($expiresAt);
+            if ($ts !== false && $ts < time()) {
+                return [
+                    'ok' => true,
+                    'valid' => false,
+                    'reason' => 'expired',
+                ];
+            }
+        }
+
+        return [
+            'ok' => true,
+            'valid' => true,
+            'record' => [
+                'group' => $group,
+                'id' => $normalizedId,
+                'issued_at' => (string) ($record['issued_at'] ?? ''),
+                'expires_at' => (string) ($record['expires_at'] ?? ''),
+                'buyer_email' => (string) ($record['buyer_email'] ?? ''),
+                'buyer_name' => (string) ($record['buyer_name'] ?? ''),
+                'price_eur' => (float) ($record['price_eur'] ?? 0),
+                'seller' => (string) ($record['seller'] ?? ''),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public static function marketplaceOrders(string $root, int $limit = 200): array
+    {
+        $limit = max(1, min(1000, $limit));
+        $file = self::marketplaceOrderFile($root);
+        if (!is_file($file)) {
+            return [];
+        }
+
+        $rows = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+        if ($rows === []) {
+            return [];
+        }
+
+        $rows = array_slice($rows, -$limit);
+        $orders = [];
+        foreach ($rows as $row) {
+            $decoded = json_decode($row, true);
+            if (is_array($decoded)) {
+                $orders[] = $decoded;
+            }
+        }
+
+        return array_reverse($orders);
+    }
+
+    /**
      * @param array<string, mixed> $config
      */
     private static function resolveInstallSource(string $root, string $source, string $kind, array $config): string
@@ -256,6 +453,108 @@ final class PackageInstaller
         return str_starts_with($value, 'http://') || str_starts_with($value, 'https://');
     }
 
+    private static function normalizeLicenseGroupKind(string $kind): string
+    {
+        $normalized = strtolower(trim($kind));
+        return match ($normalized) {
+            'plugin', 'plugins' => 'plugins',
+            'theme', 'themes' => 'themes',
+            default => throw new RuntimeException('Invalid marketplace kind: ' . $kind),
+        };
+    }
+
+    private static function registryFileForGroup(string $root, string $group): string
+    {
+        return rtrim($root, '/') . '/content/data/' . ($group === 'plugins' ? 'plugin-registry.json' : 'theme-registry.json');
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private static function loadMarketplaceIssuedLicenses(string $root): array
+    {
+        $file = self::marketplaceLicenseFile($root);
+        if (!is_file($file)) {
+            return [];
+        }
+
+        $parsed = Yaml::parse((string) file_get_contents($file));
+        if (!is_array($parsed)) {
+            return [];
+        }
+
+        $raw = $parsed['issued'] ?? [];
+        if (!is_array($raw)) {
+            return [];
+        }
+
+        $rows = [];
+        foreach ($raw as $licenseKey => $record) {
+            if (!is_string($licenseKey) || !is_array($record)) {
+                continue;
+            }
+            $rows[strtoupper(trim($licenseKey))] = $record;
+        }
+        ksort($rows);
+        return $rows;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $issued
+     */
+    private static function saveMarketplaceIssuedLicenses(string $root, array $issued): void
+    {
+        $normalized = [];
+        foreach ($issued as $licenseKey => $record) {
+            if (!is_string($licenseKey) || !is_array($record)) {
+                continue;
+            }
+            $normalized[strtoupper(trim($licenseKey))] = $record;
+        }
+        ksort($normalized);
+
+        $file = self::marketplaceLicenseFile($root);
+        if (!is_dir(dirname($file))) {
+            mkdir(dirname($file), 0775, true);
+        }
+        file_put_contents($file, Yaml::dump(['issued' => $normalized]));
+    }
+
+    /**
+     * @param array<string, mixed> $order
+     */
+    private static function appendMarketplaceOrder(string $root, array $order): void
+    {
+        $file = self::marketplaceOrderFile($root);
+        if (!is_dir(dirname($file))) {
+            mkdir(dirname($file), 0775, true);
+        }
+        file_put_contents(
+            $file,
+            (string) json_encode($order, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n",
+            FILE_APPEND
+        );
+    }
+
+    private static function generateMarketplaceLicenseKey(string $group, string $id): string
+    {
+        $prefix = $group === 'plugins' ? 'PLG' : 'THM';
+        $slug = strtoupper(substr(preg_replace('/[^A-Z0-9]/', '', strtoupper($id)) ?: 'ITEM', 0, 6));
+        $random = strtoupper(bin2hex(random_bytes(5)));
+        $checksum = strtoupper(substr(sha1($group . ':' . $id . ':' . $random), 0, 6));
+        return sprintf('ATOLL-%s-%s-%s-%s', $prefix, str_pad($slug, 6, 'X'), $random, $checksum);
+    }
+
+    private static function marketplaceLicenseFile(string $root): string
+    {
+        return rtrim($root, '/') . '/content/data/marketplace-licenses.yaml';
+    }
+
+    private static function marketplaceOrderFile(string $root): string
+    {
+        return rtrim($root, '/') . '/content/data/marketplace-orders.jsonl';
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -338,6 +637,15 @@ final class PackageInstaller
             $source = str_replace('{license_key}', rawurlencode($effectiveLicense), $source);
         } elseif ($requiresLicense && $effectiveLicense === '') {
             throw new RuntimeException("License key required for '{$id}'.");
+        }
+
+        $licenseProvider = strtolower(trim((string) ($entry['license_provider'] ?? 'atoll')));
+        if ($requiresLicense && $effectiveLicense !== '' && $licenseProvider !== 'external') {
+            $verification = self::verifyMarketplaceLicense($root, $licenseGroup, $id, $effectiveLicense);
+            if (($verification['valid'] ?? false) !== true) {
+                $reason = (string) ($verification['reason'] ?? 'invalid_license');
+                throw new RuntimeException("Invalid license key for '{$id}' ({$reason}).");
+            }
         }
 
         if ($providedLicense !== '') {

@@ -110,6 +110,11 @@ Backups lassen sich im Admin unter `Settings` ausloesen und konfigurieren.
 
 ```yaml
 backup:
+  schedule:
+    enabled: false
+    frequency: daily   # daily|weekly
+    time: "03:00"
+    weekday: 1         # nur bei weekly: 1=Mo ... 7=So
   targets:
     local:
       enabled: true
@@ -135,6 +140,12 @@ backup:
 ```
 
 Wenn ein Remote-Upload fehlschlaegt, bleibt das lokale ZIP erhalten (`partial`-Status mit Fehlerdetails).
+
+Cron-Beispiel (alle 15 Minuten pruefen, nur bei Faelligkeit ausfuehren):
+
+```cron
+*/15 * * * * cd /pfad/zur/site && php bin/atoll backup:run >> var/log/backup-cron.log 2>&1
+```
 
 ### Mail-Treiber (SMTP + API)
 

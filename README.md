@@ -69,6 +69,7 @@ Alternativen:
 - `php bin/atoll serve 8080` baut Frontend-Bundles einmalig und startet dann den PHP-Server.
 - `php bin/atoll dev:local 8080 --activate=business` nutzt das lokale Core-Sibling-Repo (`../atoll-core`) und startet danach den Dev-Server.
 - PHP-Runtime und CLI laden den Core jetzt direkt ueber `core.path` (nicht mehr starr aus `./core`), damit lokale Core-Aenderungen sofort greifen.
+- `php bin/atoll dev 8080 --sync-core` (oder `serve --sync-core`) synchronisiert bei erkanntem Core-Drift den gebuendelten `./core` automatisch vor dem Start.
 - In `dev:local` werden Registry-Installationen von Themes/Plugins fuer diesen laufenden Prozess bevorzugt als lokale Symlinks auf `../atoll-theme-<id>` bzw. `../atoll-plugin-<id>` angelegt (Live-Aenderungen ohne Reinstall). `dev` bleibt Registry-only.
 - `composer dev-local -- --setup-only` setzt nur den lokalen Core-Pfad (ohne Serverstart).
 - `php bin/atoll core:sync` synchronisiert den gebuendelten `./core`-Ordner aus `core.path` (oder `../atoll-core`), damit Starter-Core und externer Core nicht auseinanderlaufen.

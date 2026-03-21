@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Atoll\Cache\CacheManager;
+use Atoll\Backup\BackupManager;
 use Atoll\Content\ContentRepository;
 use Atoll\Hooks\HookManager;
 use Atoll\Support\Config;
@@ -21,11 +22,12 @@ $corePath = resolveCorePath($root, $config);
 $printHelp = static function (): void {
     echo "atoll-cms CLI\n\n";
     echo "Commands:\n";
-    echo "  atoll serve [port]                               Build frontend bundles once, then start server\n";
-    echo "  atoll dev [port]                                 Watch frontend bundles and start server\n";
+    echo "  atoll serve [port] [--sync-core]                 Build frontend bundles once, then start server\n";
+    echo "  atoll dev [port] [--sync-core]                   Watch frontend bundles and start server\n";
     echo "  atoll dev:local [port] [--activate=<id>]         Use sibling core repo, start dev\n";
-    echo "                   [--force-links] [--setup-only]\n";
+    echo "                   [--force-links] [--setup-only] [--sync-core]\n";
     echo "  atoll cache:clear                                Clear HTML cache\n";
+    echo "  atoll backup:run [--force]                       Run scheduled backup if due\n";
     echo "  atoll content:index:status                       Show content index status\n";
     echo "  atoll content:index:rebuild                      Rebuild SQLite content index\n";
     echo "  atoll new <path>                                 Scaffold new atoll-cms project\n";
@@ -60,6 +62,7 @@ switch ($command) {
         $port = (int) (firstPositionalArg($args, 1) ?? 8080);
         $forceLinks = in_array('--force-links', $args, true);
         $setupOnly = in_array('--setup-only', $args, true);
+        $syncCore = in_array('--sync-core', $args, true);
         $activateTheme = getFlagValue($args, '--activate');
 
         $messages = setupLocalDevWorkspace($root, $configPath, $forceLinks, $activateTheme);
@@ -73,6 +76,7 @@ switch ($command) {
 
         $config = Config::load($configPath);
         $corePath = resolveCorePath($root, $config);
+        runCoreDriftPreflight($root, $config, $corePath, 'dev:local', $syncCore);
         $watchers = startFrontendWatchers($root, $corePath, $config);
         if ($watchers === []) {
             echo "No frontend source packages detected. Starting PHP server only.\n";
@@ -90,7 +94,9 @@ switch ($command) {
         exit($exitCode);
 
     case 'dev':
-        $port = (int) ($args[1] ?? 8080);
+        $port = (int) (firstPositionalArg($args, 1) ?? 8080);
+        $syncCore = in_array('--sync-core', $args, true);
+        runCoreDriftPreflight($root, $config, $corePath, 'dev', $syncCore);
         $watchers = startFrontendWatchers($root, $corePath, $config);
         if ($watchers === []) {
             echo "No frontend source packages detected. Starting PHP server only.\n";
@@ -103,7 +109,9 @@ switch ($command) {
         exit($exitCode);
 
     case 'serve':
-        $port = (int) ($args[1] ?? 8080);
+        $port = (int) (firstPositionalArg($args, 1) ?? 8080);
+        $syncCore = in_array('--sync-core', $args, true);
+        runCoreDriftPreflight($root, $config, $corePath, 'serve', $syncCore);
         $built = runFrontendBuildsOnce($root, $corePath, $config);
         if ($built === 0) {
             echo "No frontend source packages detected. Starting PHP server only.\n";
@@ -121,6 +129,47 @@ switch ($command) {
         $cache->clear();
         echo "Cache cleared.\n";
         exit(0);
+
+    case 'backup:run':
+        $force = in_array('--force', $args, true);
+        $backup = new BackupManager($root . '/content', $root . '/backups', $config);
+        $result = $backup->runScheduled($force);
+
+        if ((bool) ($result['skipped'] ?? false)) {
+            $reason = (string) ($result['reason'] ?? 'skipped');
+            if ($reason === 'disabled') {
+                echo "Backup scheduler is disabled (backup.schedule.enabled: false).\n";
+            } elseif ($reason === 'not_due') {
+                $nextDue = (string) (($result['status']['next_due_at'] ?? '') ?: 'unknown');
+                echo "Backup not due yet. Next due: {$nextDue}\n";
+            } else {
+                echo "Backup skipped ({$reason}).\n";
+            }
+            exit(0);
+        }
+
+        $ok = (bool) ($result['ok'] ?? false);
+        $duration = (int) ($result['duration_ms'] ?? 0);
+        if ($ok) {
+            echo "Backup completed.\n";
+            echo "File: " . (string) ($result['file'] ?? '') . "\n";
+            echo "Target: " . (string) ($result['target'] ?? 'local') . "\n";
+            echo "Duration: {$duration} ms\n";
+            if ((bool) ($result['partial'] ?? false)) {
+                $errors = implode('; ', array_map('strval', $result['errors'] ?? []));
+                if ($errors !== '') {
+                    echo "Warnings: {$errors}\n";
+                }
+            }
+            exit(0);
+        }
+
+        echo "Backup failed.\n";
+        $error = (string) ($result['error'] ?? 'unknown error');
+        if ($error !== '') {
+            echo "Error: {$error}\n";
+        }
+        exit(1);
 
     case 'content:index:status':
     case 'content:index:rebuild':
@@ -1148,6 +1197,82 @@ function corePathsEqual(string $a, string $b): bool
     }
 
     return rtrim(str_replace('\\', '/', $a), '/') === rtrim(str_replace('\\', '/', $b), '/');
+}
+
+/** @param array<string, mixed> $config */
+function runCoreDriftPreflight(string $root, array $config, string $corePath, string $command, bool $syncCore = false): void
+{
+    $bundledCore = rtrim($root . '/core', '/');
+    if (!is_file($bundledCore . '/src/bootstrap.php')) {
+        return;
+    }
+
+    if (!is_file($corePath . '/src/bootstrap.php')) {
+        echo "WARNING: configured core.path is invalid: {$corePath}\n";
+        echo "         Falling back to bundled ./core is recommended.\n";
+        return;
+    }
+
+    if (corePathsEqual($corePath, $bundledCore)) {
+        return;
+    }
+
+    $active = coreFingerprint($corePath);
+    $bundled = coreFingerprint($bundledCore);
+    $drift = ($active['version'] ?? '') !== ($bundled['version'] ?? '')
+        || ($active['fingerprint'] ?? '') !== ($bundled['fingerprint'] ?? '');
+    if (!$drift) {
+        return;
+    }
+
+    if ($syncCore) {
+        $result = syncBundledCoreFromSource($root, $corePath, $bundledCore);
+        echo "[core-preflight] Bundled ./core synced from active core.path before {$command}.\n";
+        echo "[core-preflight] Source version: " . (string) ($result['source_version'] ?? 'unknown') . "\n";
+        echo "[core-preflight] Bundled version: " . (string) ($result['destination_version'] ?? 'unknown') . "\n";
+        return;
+    }
+
+    echo "====================================================================\n";
+    echo "WARNING: CORE DRIFT detected before '{$command}'.\n";
+    echo "Active core.path: {$corePath}\n";
+    echo "  version: " . (string) ($active['version'] ?? 'unknown') . "\n";
+    echo "  fingerprint: " . (string) ($active['fingerprint'] ?? 'unknown') . "\n";
+    echo "Bundled ./core: {$bundledCore}\n";
+    echo "  version: " . (string) ($bundled['version'] ?? 'unknown') . "\n";
+    echo "  fingerprint: " . (string) ($bundled['fingerprint'] ?? 'unknown') . "\n";
+    echo "Fix: run 'php bin/atoll core:sync'\n";
+    echo "Or:  rerun with '--sync-core' for automatic sync now.\n";
+    echo "====================================================================\n";
+}
+
+/** @return array{version:string,fingerprint:string} */
+function coreFingerprint(string $corePath): array
+{
+    $version = readCoreVersion($corePath);
+    $files = [
+        'VERSION',
+        'src/bootstrap.php',
+        'src/App.php',
+        'src/Cli/LegacyCliRunner.php',
+        'admin/index.html',
+    ];
+
+    $ctx = hash_init('sha256');
+    foreach ($files as $relative) {
+        $path = rtrim($corePath, '/') . '/' . $relative;
+        if (!is_file($path)) {
+            hash_update($ctx, $relative . ':missing');
+            continue;
+        }
+        hash_update($ctx, $relative . ':');
+        hash_update_file($ctx, $path);
+    }
+
+    return [
+        'version' => $version,
+        'fingerprint' => substr(hash_final($ctx), 0, 16),
+    ];
 }
 
 /**

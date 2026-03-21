@@ -37,6 +37,10 @@ final class PluginManager
     public function load(): void
     {
         $this->state = $this->loadState();
+        $this->plugins = [];
+        $this->routes = [];
+        $this->islands = [];
+        $this->adminPages = [];
 
         if (!is_dir($this->pluginsDir)) {
             return;
@@ -72,9 +76,7 @@ final class PluginManager
                 }
             }
 
-            foreach (($manifest['routes'] ?? []) as $route => $handler) {
-                $this->routes[(string) $route] = $handler;
-            }
+            $this->registerRouteDefinition($manifest['routes'] ?? []);
 
             foreach (($manifest['islands'] ?? []) as $name => $relativePath) {
                 $path = rtrim($dir, '/') . '/' . ltrim((string) $relativePath, '/');
@@ -103,6 +105,10 @@ final class PluginManager
                     'path' => $path,
                 ];
             }
+        }
+
+        foreach ($this->hooks->run('route:register', $this) as $result) {
+            $this->registerRouteDefinition($result);
         }
     }
 
@@ -198,5 +204,39 @@ final class PluginManager
 
         $reflection = new \ReflectionFunction(\Closure::fromCallable($handler));
         return $reflection->getNumberOfParameters() > 0 ? $handler($request) : $handler();
+    }
+
+    private function registerRouteDefinition(mixed $definition): void
+    {
+        if (!is_array($definition) || $definition === []) {
+            return;
+        }
+
+        if (array_is_list($definition)) {
+            foreach ($definition as $item) {
+                $this->registerRouteDefinition($item);
+            }
+            return;
+        }
+
+        if (isset($definition['path'])) {
+            $path = trim((string) ($definition['path'] ?? ''));
+            $handler = $definition['handler'] ?? null;
+            if ($path !== '' && $handler !== null) {
+                $this->routes[$path] = $handler;
+            }
+            return;
+        }
+
+        foreach ($definition as $path => $handler) {
+            if (!is_string($path)) {
+                continue;
+            }
+            $normalized = trim($path);
+            if ($normalized === '') {
+                continue;
+            }
+            $this->routes[$normalized] = $handler;
+        }
     }
 }

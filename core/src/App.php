@@ -265,8 +265,34 @@ final class App
             'navigation' => $content->readDataFile('navigation.yaml'),
         ];
 
-        $hooks->run('page:before_render', $payload, $request);
+        foreach ($hooks->run('page:before_render', $payload, $request) as $result) {
+            if ($result instanceof Response) {
+                return $security->applyHeaders($result);
+            }
+
+            if (!is_array($result)) {
+                continue;
+            }
+
+            $hookResponse = $result['response'] ?? null;
+            if ($hookResponse instanceof Response) {
+                return $security->applyHeaders($hookResponse);
+            }
+
+            $hookPayload = $result['payload'] ?? null;
+            if (!is_array($hookPayload)) {
+                continue;
+            }
+
+            foreach ($hookPayload as $key => $value) {
+                if (is_string($key) && $key !== '') {
+                    $payload[$key] = $value;
+                }
+            }
+        }
+
         $html = $templates->render((string) $resolved['template'], $payload);
+        $html = $this->injectThemeCssVariables($html);
         $html = $islands->process($html);
 
         foreach ($hooks->run('page:after_render', $html, $payload, $request) as $result) {
@@ -290,6 +316,42 @@ final class App
         $html = preg_replace('/>\s+</', '><', $html) ?? $html;
         $html = preg_replace('/\s{2,}/', ' ', $html) ?? $html;
         return trim($html);
+    }
+
+    private function injectThemeCssVariables(string $html): string
+    {
+        $variables = Config::get($this->config, 'appearance.custom_variables', []);
+        if (!is_array($variables) || $variables === []) {
+            return $html;
+        }
+
+        $pairs = [];
+        foreach ($variables as $name => $value) {
+            if (!is_string($name) || preg_match('/^--[a-zA-Z0-9_-]+$/', $name) !== 1) {
+                continue;
+            }
+            $raw = trim((string) $value);
+            if ($raw === '') {
+                continue;
+            }
+            $sanitized = str_replace(['<', '>', '{', '}'], '', $raw);
+            if ($sanitized === '') {
+                continue;
+            }
+
+            $pairs[] = $name . ': ' . $sanitized;
+        }
+
+        if ($pairs === []) {
+            return $html;
+        }
+
+        $style = '<style id="atoll-theme-overrides">:root{' . implode(';', $pairs) . ';}</style>';
+        if (str_contains($html, '</head>')) {
+            return str_replace('</head>', $style . '</head>', $html);
+        }
+
+        return $style . $html;
     }
 
     private function normalizeCorePath(string $path): string

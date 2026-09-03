@@ -16,6 +16,14 @@
   let format = $state('');
   let quality = $state('82');
   let overwrite = $state(false);
+  let savingMeta = $state(false);
+  let metaEditor = $state({
+    alt: '',
+    caption: '',
+    focal_point: { x: 0.5, y: 0.5 },
+    copyright: '',
+    license_url: ''
+  });
 
   onMount(async () => {
     await loadMedia();
@@ -32,6 +40,23 @@
       const firstImage = files.find((file) => file.is_image);
       selectedFile = firstImage?.file || files[0].file || '';
     }
+  });
+
+  $effect(() => {
+    const current = selectedMeta();
+    if (!current) return;
+    const meta = current.meta || {};
+    const focal = meta.focal_point || {};
+    metaEditor = {
+      alt: String(meta.alt || ''),
+      caption: String(meta.caption || ''),
+      focal_point: {
+        x: Number(focal.x ?? 0.5),
+        y: Number(focal.y ?? 0.5)
+      },
+      copyright: String(meta.copyright || ''),
+      license_url: String(meta.license_url || '')
+    };
   });
 
   async function loadMedia() {
@@ -85,7 +110,8 @@
         height: Number(height || 0),
         quality: Number(quality || 82),
         format,
-        overwrite
+        overwrite,
+        focal_point: metaEditor?.focal_point || { x: 0.5, y: 0.5 }
       };
 
       const result = await api('/admin/api/media/transform', {
@@ -101,6 +127,38 @@
       addToast(err.message || 'Bildverarbeitung fehlgeschlagen.', 'error');
     } finally {
       processing = false;
+    }
+  }
+
+  async function saveMetadata() {
+    if (!selectedFile || savingMeta) return;
+    savingMeta = true;
+    try {
+      const result = await api('/admin/api/media/meta/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file: selectedFile,
+          meta: {
+            ...metaEditor,
+            focal_point: {
+              x: Number(metaEditor?.focal_point?.x ?? 0.5),
+              y: Number(metaEditor?.focal_point?.y ?? 0.5)
+            }
+          }
+        })
+      });
+
+      files = files.map((file) => (
+        file.file === selectedFile
+          ? { ...file, meta: result.meta || file.meta }
+          : file
+      ));
+      addToast('Metadaten gespeichert.', 'success');
+    } catch (err) {
+      addToast(err?.message || 'Metadaten konnten nicht gespeichert werden.', 'error');
+    } finally {
+      savingMeta = false;
     }
   }
 
@@ -211,6 +269,43 @@
         </div>
       {:else}
         <p class="empty">Bitte links eine Datei waehlen.</p>
+      {/if}
+
+      {#if selectedFile}
+        <div class="meta-editor">
+          <div class="meta-editor__head">
+            <h4>Metadaten</h4>
+            <button type="button" class="meta-save-btn" onclick={saveMetadata} disabled={savingMeta}>
+              {savingMeta ? 'Speichert...' : 'Metadaten speichern'}
+            </button>
+          </div>
+          <div class="meta-grid">
+            <div class="field">
+              <label for="meta-alt">Alt-Text</label>
+              <input id="meta-alt" bind:value={metaEditor.alt} type="text" placeholder="Beschreibender Alt-Text">
+            </div>
+            <div class="field">
+              <label for="meta-caption">Caption</label>
+              <input id="meta-caption" bind:value={metaEditor.caption} type="text" placeholder="Bildunterschrift">
+            </div>
+            <div class="field">
+              <label for="meta-focal-x">Focal X (0-1)</label>
+              <input id="meta-focal-x" bind:value={metaEditor.focal_point.x} type="number" min="0" max="1" step="0.01">
+            </div>
+            <div class="field">
+              <label for="meta-focal-y">Focal Y (0-1)</label>
+              <input id="meta-focal-y" bind:value={metaEditor.focal_point.y} type="number" min="0" max="1" step="0.01">
+            </div>
+            <div class="field">
+              <label for="meta-copyright">Copyright</label>
+              <input id="meta-copyright" bind:value={metaEditor.copyright} type="text" placeholder="z. B. Foto: Max Mustermann">
+            </div>
+            <div class="field">
+              <label for="meta-license">License URL</label>
+              <input id="meta-license" bind:value={metaEditor.license_url} type="url" placeholder="https://...">
+            </div>
+          </div>
+        </div>
       {/if}
 
       <div class="field-row">
@@ -479,6 +574,59 @@
     font-size: 0.74rem;
   }
 
+  .meta-editor {
+    margin: 0 1rem 0.85rem;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .meta-editor__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .meta-editor__head h4 {
+    margin: 0;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+
+  .meta-save-btn {
+    padding: 0.38rem 0.65rem;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.76rem;
+    cursor: pointer;
+  }
+
+  .meta-save-btn:hover {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+
+  .meta-save-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 0.6rem;
+    padding-top: 0.75rem;
+  }
+
   .field {
     padding: 0 1rem;
     margin-bottom: 0.75rem;
@@ -558,6 +706,10 @@
 
   @media (max-width: 960px) {
     .media-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .meta-grid {
       grid-template-columns: 1fr;
     }
   }

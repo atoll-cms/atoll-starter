@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Atoll\Media;
 
 use Atoll\Hooks\HookManager;
+use Atoll\Support\Yaml;
 use Intervention\Image\ImageManager;
 
 final class MediaManager
@@ -42,6 +43,7 @@ final class MediaManager
         if (class_exists(ImageManager::class) && $this->isImage($targetPath)) {
             $generated = $this->generateResponsiveImages($targetPath);
         }
+        $this->writeMetaAbsolute($targetPath, $this->readMetaAbsolute($targetPath));
 
         $publicPath = str_replace($this->uploadRoot, '/assets/uploads', $targetPath);
 
@@ -78,6 +80,9 @@ final class MediaManager
             }
 
             $absolute = $item->getPathname();
+            if (str_ends_with($absolute, '.meta.yaml')) {
+                continue;
+            }
             $public = $this->toPublicPath($absolute);
             if ($public === null) {
                 continue;
@@ -105,6 +110,7 @@ final class MediaManager
                 'modified_at' => date('c', (int) @filemtime($absolute)),
                 'width' => $width,
                 'height' => $height,
+                'meta' => $this->readMetaAbsolute($absolute),
             ];
         }
 
@@ -112,6 +118,42 @@ final class MediaManager
         $items = array_slice($items, 0, $limit);
 
         return ['ok' => true, 'files' => $items];
+    }
+
+    /** @return array<string, mixed> */
+    public function meta(string $publicPath): array
+    {
+        $absolute = $this->toAbsolutePath($publicPath);
+        if ($absolute === null || !is_file($absolute)) {
+            return ['ok' => false, 'error' => 'File not found'];
+        }
+
+        return [
+            'ok' => true,
+            'file' => $publicPath,
+            'meta' => $this->readMetaAbsolute($absolute),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $meta
+     * @return array<string, mixed>
+     */
+    public function saveMeta(string $publicPath, array $meta): array
+    {
+        $absolute = $this->toAbsolutePath($publicPath);
+        if ($absolute === null || !is_file($absolute)) {
+            return ['ok' => false, 'error' => 'File not found'];
+        }
+
+        $normalized = $this->normalizeMeta($meta);
+        $this->writeMetaAbsolute($absolute, $normalized);
+
+        return [
+            'ok' => true,
+            'file' => $publicPath,
+            'meta' => $normalized,
+        ];
     }
 
     /** @param array<string, mixed> $options
@@ -165,9 +207,12 @@ final class MediaManager
 
         try {
             $image = $manager->read($absolute);
+            $meta = $this->readMetaAbsolute($absolute);
             if ($mode === 'crop') {
+                $focal = $this->normalizeFocalPoint($options['focal_point'] ?? ($meta['focal_point'] ?? null));
+                $position = $this->focalPointToPosition($focal);
                 if (is_callable([$image, 'cover'])) {
-                    $image->cover($width, $height);
+                    $image->cover($width, $height, $position);
                 } else {
                     $image->resize($width, $height);
                 }
@@ -205,6 +250,7 @@ final class MediaManager
             if (!$saved) {
                 return ['ok' => false, 'error' => 'Could not write transformed image'];
             }
+            $this->writeMetaAbsolute($targetAbsolute, $meta);
 
             $publicTarget = $this->toPublicPath($targetAbsolute);
             if ($publicTarget === null) {
@@ -226,6 +272,7 @@ final class MediaManager
                 'height' => $height,
                 'format' => $outputExt,
                 'overwrite' => $overwrite && $outputExt === $inputExt,
+                'meta' => $meta,
             ];
         } catch (\Throwable) {
             return ['ok' => false, 'error' => 'Image transform failed'];
@@ -364,6 +411,112 @@ final class MediaManager
         } catch (\Throwable) {
             return false;
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function defaultMeta(): array
+    {
+        return [
+            'alt' => '',
+            'caption' => '',
+            'focal_point' => ['x' => 0.5, 'y' => 0.5],
+            'copyright' => '',
+            'license_url' => '',
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $meta
+     * @return array<string, mixed>
+     */
+    private function normalizeMeta(array $meta): array
+    {
+        $defaults = $this->defaultMeta();
+        return [
+            'alt' => trim((string) ($meta['alt'] ?? $defaults['alt'])),
+            'caption' => trim((string) ($meta['caption'] ?? $defaults['caption'])),
+            'focal_point' => $this->normalizeFocalPoint($meta['focal_point'] ?? $defaults['focal_point']),
+            'copyright' => trim((string) ($meta['copyright'] ?? $defaults['copyright'])),
+            'license_url' => trim((string) ($meta['license_url'] ?? $defaults['license_url'])),
+        ];
+    }
+
+    /**
+     * @return array{x:float,y:float}
+     */
+    private function normalizeFocalPoint(mixed $raw): array
+    {
+        if (is_array($raw)) {
+            $x = (float) ($raw['x'] ?? 0.5);
+            $y = (float) ($raw['y'] ?? 0.5);
+            return [
+                'x' => max(0, min(1, $x)),
+                'y' => max(0, min(1, $y)),
+            ];
+        }
+
+        if (is_string($raw) && str_contains($raw, ',')) {
+            [$sx, $sy] = array_pad(explode(',', $raw, 2), 2, '0.5');
+            return [
+                'x' => max(0, min(1, (float) trim($sx))),
+                'y' => max(0, min(1, (float) trim($sy))),
+            ];
+        }
+
+        return ['x' => 0.5, 'y' => 0.5];
+    }
+
+    private function focalPointToPosition(array $focalPoint): string
+    {
+        $x = (float) ($focalPoint['x'] ?? 0.5);
+        $y = (float) ($focalPoint['y'] ?? 0.5);
+        $horizontal = $x < 0.34 ? 'left' : ($x > 0.66 ? 'right' : 'center');
+        $vertical = $y < 0.34 ? 'top' : ($y > 0.66 ? 'bottom' : 'center');
+
+        if ($horizontal === 'center' && $vertical === 'center') {
+            return 'center';
+        }
+        if ($horizontal === 'center') {
+            return $vertical;
+        }
+        if ($vertical === 'center') {
+            return $horizontal;
+        }
+
+        return $vertical . '-' . $horizontal;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function readMetaAbsolute(string $absolutePath): array
+    {
+        $sidecar = $this->metaSidecarPath($absolutePath);
+        if (!is_file($sidecar)) {
+            return $this->defaultMeta();
+        }
+
+        $parsed = Yaml::parse((string) file_get_contents($sidecar));
+        return $this->normalizeMeta(is_array($parsed) ? $parsed : []);
+    }
+
+    /**
+     * @param array<string, mixed> $meta
+     */
+    private function writeMetaAbsolute(string $absolutePath, array $meta): void
+    {
+        $sidecar = $this->metaSidecarPath($absolutePath);
+        if (!is_dir(dirname($sidecar))) {
+            mkdir(dirname($sidecar), 0775, true);
+        }
+        file_put_contents($sidecar, Yaml::dump($this->normalizeMeta($meta)));
+    }
+
+    private function metaSidecarPath(string $absolutePath): string
+    {
+        return $absolutePath . '.meta.yaml';
     }
 
     private function toAbsolutePath(string $publicPath): ?string

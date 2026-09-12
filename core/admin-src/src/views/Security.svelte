@@ -6,6 +6,9 @@
   let twofaCode = $state('');
   let generatedSecret = $state('');
   let generatedUri = $state('');
+  let scanRunning = $state(false);
+  let scanPerformed = $state(false);
+  let mixedContent = $state({ scannedFiles: 0, count: 0, findings: [] });
 
   async function loadAudit() {
     const result = await api('/admin/api/security/audit?limit=100');
@@ -60,6 +63,28 @@
       addToast('2FA deaktiviert.', 'info');
     } catch (err) {
       addToast(err.message, 'error');
+    }
+  }
+
+  async function scanMixedContent() {
+    scanRunning = true;
+    try {
+      const result = await api('/admin/api/security/mixed-content/scan?limit=200');
+      mixedContent = {
+        scannedFiles: Number(result.scanned_files || 0),
+        count: Number(result.count || 0),
+        findings: Array.isArray(result.findings) ? result.findings : []
+      };
+      scanPerformed = true;
+      if (mixedContent.count > 0) {
+        addToast(`Mixed Content gefunden: ${mixedContent.count}`, 'error');
+      } else {
+        addToast('Kein Mixed Content gefunden.', 'success');
+      }
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      scanRunning = false;
     }
   }
 </script>
@@ -121,6 +146,35 @@
         {:else}
           <div class="empty-msg">Keine Audit-Eintraege.</div>
         {/each}
+      </div>
+    </div>
+
+    <div class="section-card section-card--full">
+      <div class="section-header">
+        <h3>Mixed Content Scan</h3>
+        <button class="refresh-btn" onclick={scanMixedContent} disabled={scanRunning} aria-label="Mixed Content scannen">
+          {#if scanRunning}
+            <span class="spinner"></span>
+          {:else}
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4"/><path d="m16.2 7.8-2.9 2.9"/><path d="M21 12h-4"/><path d="m16.2 16.2-2.9-2.9"/><path d="M12 21v-4"/><path d="m7.8 16.2 2.9-2.9"/><path d="M3 12h4"/><path d="m7.8 7.8 2.9 2.9"/></svg>
+          {/if}
+        </button>
+      </div>
+      <div class="section-body">
+        <p class="info-text">Prueft Templates, Content und Config auf `http://`-Referenzen.</p>
+        <p class="scan-stats">
+          Dateien gescannt: <strong>{mixedContent.scannedFiles}</strong> · Treffer: <strong>{mixedContent.count}</strong>
+        </p>
+        <div class="scan-list">
+          {#each mixedContent.findings.slice(0, 30) as finding}
+            <div class="scan-item">
+              <div class="scan-file">{finding.file}:{finding.line}</div>
+              <div class="scan-snippet">{finding.snippet}</div>
+            </div>
+          {:else}
+            <div class="empty-msg">{scanPerformed ? 'Kein Mixed Content gefunden.' : 'Noch kein Scan ausgefuehrt.'}</div>
+          {/each}
+        </div>
       </div>
     </div>
   </div>
@@ -319,6 +373,52 @@
     text-align: center;
     color: var(--muted);
     font-size: 0.9rem;
+  }
+
+  .section-card--full {
+    grid-column: 1 / -1;
+  }
+
+  .scan-stats {
+    margin: 0.5rem 0 1rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+
+  .scan-list {
+    display: grid;
+    gap: 0.5rem;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .scan-item {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.6rem 0.75rem;
+  }
+
+  .scan-file {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.75rem;
+    color: var(--text);
+    margin-bottom: 0.2rem;
+  }
+
+  .scan-snippet {
+    font-size: 0.78rem;
+    color: var(--muted);
+    word-break: break-word;
+  }
+
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--line);
+    border-top-color: var(--brand);
+    border-radius: 999px;
+    animation: spin 0.8s linear infinite;
   }
 
   @media (max-width: 768px) {

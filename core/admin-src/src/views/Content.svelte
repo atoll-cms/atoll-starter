@@ -4,6 +4,7 @@
 
   let saving = $state(false);
   let editorTitle = $state('');
+  let editorSlug = $state('');
   let editorFrontmatter = $state('');
   let editorMarkdown = $state('');
   let previewHtml = $state('');
@@ -16,6 +17,11 @@
   let collectionMeta = $state({});
   let schemaErrorByField = $state({});
   let showFrontmatterAdvanced = $state(false);
+  let revisions = $state([]);
+  let revisionsLoading = $state(false);
+  let selectedRevision = $state(null);
+  let compareOpen = $state(false);
+  let restoringRevision = $state(false);
 
   const SYSTEM_FIELDS = new Set([
     'title',
@@ -34,6 +40,7 @@
       delete fm.content;
       delete fm.markdown;
       editorFrontmatter = JSON.stringify(fm, null, 2);
+      editorSlug = String(fm.slug || $currentEntry.slug || '').trim();
       editorMarkdown = $currentEntry.markdown || '';
       previewHtml = $currentEntry.content || '';
     }
@@ -46,6 +53,9 @@
       seoSnippetTitle = '';
       seoSnippetUrl = '';
       seoSnippetDescription = '';
+      revisions = [];
+      selectedRevision = null;
+      compareOpen = false;
       return;
     }
 
@@ -240,10 +250,93 @@
     }
   }
 
+  async function loadRevisions() {
+    if (!$currentCollection || !$currentEntryId) {
+      revisions = [];
+      return;
+    }
+
+    revisionsLoading = true;
+    try {
+      const data = await api(`/admin/api/entry/revisions?collection=${encodeURIComponent($currentCollection)}&id=${encodeURIComponent($currentEntryId)}&limit=30`);
+      revisions = Array.isArray(data?.revisions) ? data.revisions : [];
+    } catch {
+      revisions = [];
+    } finally {
+      revisionsLoading = false;
+    }
+  }
+
+  async function compareRevision(revisionId) {
+    if (!$currentCollection || !$currentEntryId || !revisionId) return;
+    try {
+      const data = await api(`/admin/api/entry/revision?collection=${encodeURIComponent($currentCollection)}&id=${encodeURIComponent($currentEntryId)}&revision=${encodeURIComponent(revisionId)}`);
+      selectedRevision = data?.revision || null;
+      compareOpen = selectedRevision !== null;
+    } catch (err) {
+      addToast(err?.message || 'Revision konnte nicht geladen werden.', 'error');
+    }
+  }
+
+  async function restoreRevision(revisionId) {
+    if (!$currentCollection || !$currentEntryId || !revisionId) return;
+    if (!window.confirm('Diese Revision wirklich wiederherstellen?')) return;
+
+    restoringRevision = true;
+    try {
+      await api('/admin/api/entry/revision/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          collection: $currentCollection,
+          id: $currentEntryId,
+          revision: revisionId
+        })
+      });
+      addToast('Revision wiederhergestellt.', 'success');
+      compareOpen = false;
+      selectedRevision = null;
+      await loadEntries();
+      await selectEntry($currentEntryId);
+      await loadRevisions();
+    } catch (err) {
+      addToast(err?.message || 'Restore fehlgeschlagen.', 'error');
+    } finally {
+      restoringRevision = false;
+    }
+  }
+
+  function revisionLabel(row) {
+    const createdAt = String(row?.created_at || '');
+    if (!createdAt) return row?.id || 'Unbekannt';
+    const date = new Date(createdAt);
+    if (Number.isNaN(date.getTime())) return createdAt;
+    return date.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  function diffSummary(currentMarkdown, revisionMarkdown) {
+    const currentLines = String(currentMarkdown || '').split('\n');
+    const revisionLines = String(revisionMarkdown || '').split('\n');
+    const max = Math.max(currentLines.length, revisionLines.length);
+    let changed = 0;
+    for (let i = 0; i < max; i += 1) {
+      if ((currentLines[i] || '') !== (revisionLines[i] || '')) {
+        changed += 1;
+      }
+    }
+
+    return {
+      current: currentLines.length,
+      revision: revisionLines.length,
+      changed
+    };
+  }
+
   async function selectEntry(id) {
     currentEntryId.set(id);
     const data = await api(`/admin/api/entry?collection=${encodeURIComponent($currentCollection)}&id=${encodeURIComponent(id)}`);
     currentEntry.set(data.entry);
+    await loadRevisions();
   }
 
   async function saveEntry(event) {
@@ -263,9 +356,14 @@
     if (editorTitle.trim() !== '') {
       frontmatter.title = editorTitle.trim();
     }
+    if (editorSlug.trim() !== '') {
+      frontmatter.slug = editorSlug.trim();
+    } else if (Object.prototype.hasOwnProperty.call(frontmatter, 'slug')) {
+      delete frontmatter.slug;
+    }
 
     try {
-      await api('/admin/api/entry/save', {
+      const saveResult = await api('/admin/api/entry/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -277,6 +375,11 @@
       });
 
       addToast('Eintrag gespeichert.', 'success');
+      if (saveResult?.auto_redirect?.created) {
+        addToast(`Auto-Redirect: ${saveResult.auto_redirect.from} -> ${saveResult.auto_redirect.to}`, 'info');
+      } else if (saveResult?.auto_redirect?.reason === 'conflict') {
+        addToast('Slug geaendert, aber Redirect-Konflikt erkannt. Bitte unter Redirects pruefen.', 'error');
+      }
       await loadEntries();
       await loadCollectionMeta();
       await selectEntry($currentEntryId);
@@ -504,12 +607,20 @@
       {#if $currentEntry}
         <form onsubmit={saveEntry}>
           <div class="editor-toolbar">
-            <input
-              type="text"
-              class="title-input"
-              bind:value={editorTitle}
-              placeholder="Titel"
-            >
+            <div class="title-group">
+              <input
+                type="text"
+                class="title-input"
+                bind:value={editorTitle}
+                placeholder="Titel"
+              >
+              <input
+                type="text"
+                class="slug-input"
+                bind:value={editorSlug}
+                placeholder="slug (z. B. hallo-welt)"
+              >
+            </div>
             <div class="toolbar-actions">
               <button
                 type="button"
@@ -548,6 +659,76 @@
                 </div>
               {/each}
             </div>
+          </div>
+
+          <div class="revisions-panel">
+            <div class="revisions-header">
+              <div>
+                <strong>Versionen</strong>
+                <span>{revisions.length} Snapshot(s)</span>
+              </div>
+              <button type="button" class="revision-refresh" onclick={loadRevisions} disabled={revisionsLoading}>
+                {revisionsLoading ? 'Lade...' : 'Neu laden'}
+              </button>
+            </div>
+
+            {#if revisions.length === 0}
+              <p class="revisions-empty">Noch keine Revision vorhanden.</p>
+            {:else}
+              <div class="revisions-list">
+                {#each revisions as revision}
+                  <div class="revision-row">
+                    <div class="revision-meta">
+                      <div class="revision-time">{revisionLabel(revision)}</div>
+                      <div class="revision-info">
+                        <span>{revision.reason || 'save'}</span>
+                        {#if revision.user}
+                          <span>{revision.user}</span>
+                        {/if}
+                      </div>
+                    </div>
+                    <div class="revision-actions">
+                      <button
+                        type="button"
+                        class="revision-btn"
+                        class:active={selectedRevision?.id === revision.id && compareOpen}
+                        onclick={() => compareRevision(revision.id)}
+                      >
+                        Vergleichen
+                      </button>
+                      <button
+                        type="button"
+                        class="revision-btn revision-btn--restore"
+                        onclick={() => restoreRevision(revision.id)}
+                        disabled={restoringRevision}
+                      >
+                        Wiederherstellen
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            {#if compareOpen && selectedRevision}
+              {@const summary = diffSummary(editorMarkdown, selectedRevision.markdown)}
+              <div class="revision-compare">
+                <div class="revision-compare__meta">
+                  <strong>Vergleich mit {revisionLabel(selectedRevision)}</strong>
+                  <span>{summary.changed} geaenderte Zeile(n) · Aktuell {summary.current} · Revision {summary.revision}</span>
+                </div>
+                <div class="revision-compare__grid">
+                  <div>
+                    <div class="pane-label">Aktuell</div>
+                    <pre>{editorMarkdown}</pre>
+                  </div>
+                  <div>
+                    <div class="pane-label">Revision</div>
+                    <pre>{selectedRevision.markdown}</pre>
+                  </div>
+                </div>
+              </div>
+            {/if}
           </div>
 
           <div class="editor-split" class:with-preview={showPreview}>
@@ -810,8 +991,15 @@
     flex-shrink: 0;
   }
 
-  .title-input {
+  .title-group {
     flex: 1;
+    min-width: 0;
+    display: grid;
+    gap: 0.2rem;
+  }
+
+  .title-input {
+    width: 100%;
     padding: 0.4rem 0;
     background: transparent;
     border: none;
@@ -823,6 +1011,22 @@
 
   .title-input:focus {
     outline: none;
+  }
+
+  .slug-input {
+    width: 100%;
+    padding: 0.2rem 0;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 0.75rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .slug-input:focus {
+    outline: none;
+    color: var(--text);
   }
 
   .toolbar-actions {
@@ -1014,6 +1218,183 @@
     font-size: 0.74rem;
     color: var(--muted);
     line-height: 1.4;
+  }
+
+  .revisions-panel {
+    border-bottom: 1px solid var(--line);
+    background: rgba(8, 20, 24, 0.3);
+    padding: 0.7rem 1rem;
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .revisions-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .revisions-header strong {
+    font-size: 0.86rem;
+    display: block;
+  }
+
+  .revisions-header span {
+    font-size: 0.73rem;
+    color: var(--muted);
+  }
+
+  .revision-refresh {
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .revision-refresh:hover:not(:disabled) {
+    color: var(--text);
+    border-color: var(--brand);
+  }
+
+  .revision-refresh:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .revisions-empty {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+
+  .revisions-list {
+    display: grid;
+    gap: 0.35rem;
+    max-height: 180px;
+    overflow: auto;
+    padding-right: 0.15rem;
+  }
+
+  .revision-row {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: rgba(8, 20, 24, 0.55);
+    padding: 0.48rem 0.58rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .revision-meta {
+    min-width: 0;
+  }
+
+  .revision-time {
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+
+  .revision-info {
+    display: flex;
+    gap: 0.35rem;
+    margin-top: 0.15rem;
+    color: var(--muted);
+    font-size: 0.7rem;
+  }
+
+  .revision-info span {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.08rem 0.4rem;
+  }
+
+  .revision-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+
+  .revision-btn {
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 0.3rem 0.58rem;
+    font-size: 0.74rem;
+    cursor: pointer;
+  }
+
+  .revision-btn:hover {
+    color: var(--text);
+    border-color: var(--brand);
+  }
+
+  .revision-btn.active {
+    color: var(--text);
+    border-color: var(--brand);
+    background: rgba(245, 158, 11, 0.12);
+  }
+
+  .revision-btn--restore {
+    color: #86efac;
+    border-color: rgba(34, 197, 94, 0.35);
+  }
+
+  .revision-btn--restore:hover {
+    border-color: rgba(34, 197, 94, 0.6);
+    color: #bbf7d0;
+  }
+
+  .revision-compare {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    background: rgba(7, 17, 20, 0.8);
+  }
+
+  .revision-compare__meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.45rem 0.7rem;
+    border-bottom: 1px solid var(--line);
+    background: rgba(8, 20, 24, 0.85);
+  }
+
+  .revision-compare__meta strong {
+    font-size: 0.77rem;
+  }
+
+  .revision-compare__meta span {
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+
+  .revision-compare__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+  }
+
+  .revision-compare__grid > div + div {
+    border-left: 1px solid var(--line);
+  }
+
+  .revision-compare__grid pre {
+    margin: 0;
+    padding: 0.7rem;
+    max-height: 180px;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: 0.73rem;
+    line-height: 1.5;
+    font-family: 'JetBrains Mono', monospace;
   }
 
   .editor-panes {
@@ -1217,6 +1598,28 @@
 
     .seo-panel {
       grid-template-columns: 1fr;
+    }
+
+    .revision-row {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .revision-actions {
+      width: 100%;
+    }
+
+    .revision-btn {
+      flex: 1;
+    }
+
+    .revision-compare__grid {
+      grid-template-columns: 1fr;
+    }
+
+    .revision-compare__grid > div + div {
+      border-left: none;
+      border-top: 1px solid var(--line);
     }
   }
 </style>

@@ -26,7 +26,12 @@
 
       user.set(result.user);
       csrf.set(result.csrf);
-      security.update((s) => ({ ...s, twofaEnabled: !!result?.security?.twofa_enabled }));
+      security.update((s) => ({
+        ...s,
+        twofaEnabled: !!result?.security?.twofa_enabled,
+        role: String(result?.security?.role || 'owner'),
+        permissions: Array.isArray(result?.security?.permissions) ? result.security.permissions : []
+      }));
     } catch (err) {
       error = err.message;
     } finally {

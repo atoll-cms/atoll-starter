@@ -83,9 +83,17 @@ final class FormManager
             return ['ok' => false, 'error' => 'Validation failed', 'fields' => $errors];
         }
 
+        try {
+            $submissionId = bin2hex(random_bytes(8));
+        } catch (\Throwable) {
+            $submissionId = substr(sha1((string) microtime(true) . '|' . (string) mt_rand()), 0, 16);
+        }
+
         $record = [
+            'id' => $submissionId,
             'timestamp' => date('c'),
             'ip' => $request->server['REMOTE_ADDR'] ?? 'unknown',
+            'status' => 'new',
             'payload' => array_filter($payload, static fn ($key) => !str_starts_with((string) $key, '_'), ARRAY_FILTER_USE_KEY),
         ];
 

@@ -7,6 +7,7 @@ namespace Atoll\Template;
 use Atoll\Hooks\HookManager;
 use Atoll\Islands\IslandManager;
 use Atoll\Seo\SeoManager;
+use Atoll\Support\Yaml;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
 use Twig\TwigFunction;
@@ -48,6 +49,7 @@ final class TemplateEngine
             $this->twig->addFunction(new TwigFunction('theme_asset', fn (string $path) => $this->resolveThemeAsset($path)));
             $this->twig->addFunction(new TwigFunction('url', fn (string $path = '/') => $this->resolveUrl($path)));
             $this->twig->addFunction(new TwigFunction('asset', fn (string $path) => $this->resolveUrl($path)));
+            $this->twig->addFunction(new TwigFunction('media_meta', fn (string $path) => $this->resolveMediaMeta($path)));
             $this->twig->addFunction(new TwigFunction('base_path', fn () => $this->basePath === '' ? '/' : $this->basePath));
             $this->twig->addFunction(new TwigFunction('now', fn () => date('c')));
             $this->twig->addFunction(new TwigFunction('csrf_token', fn () => $this->resolveCsrfToken()));
@@ -115,6 +117,54 @@ final class TemplateEngine
 
         $token = ($this->csrfTokenProvider)();
         return is_string($token) ? $token : '';
+    }
+
+    /** @return array<string, mixed> */
+    private function resolveMediaMeta(string $publicPath): array
+    {
+        $publicPath = trim($publicPath);
+        if ($publicPath === '' || !str_starts_with($publicPath, '/assets/uploads/')) {
+            return $this->defaultMediaMeta();
+        }
+
+        $relative = ltrim(substr($publicPath, strlen('/assets/uploads/')), '/');
+        if ($relative === '' || str_contains($relative, '..')) {
+            return $this->defaultMediaMeta();
+        }
+
+        $absolute = rtrim($this->siteRoot, '/') . '/assets/uploads/' . $relative;
+        $sidecar = $absolute . '.meta.yaml';
+        if (!is_file($sidecar)) {
+            return $this->defaultMediaMeta();
+        }
+
+        $parsed = Yaml::parse((string) file_get_contents($sidecar));
+        $meta = is_array($parsed) ? $parsed : [];
+        $focalRaw = $meta['focal_point'] ?? [];
+        $focal = is_array($focalRaw) ? $focalRaw : [];
+
+        return [
+            'alt' => trim((string) ($meta['alt'] ?? '')),
+            'caption' => trim((string) ($meta['caption'] ?? '')),
+            'focal_point' => [
+                'x' => max(0, min(1, (float) ($focal['x'] ?? 0.5))),
+                'y' => max(0, min(1, (float) ($focal['y'] ?? 0.5))),
+            ],
+            'copyright' => trim((string) ($meta['copyright'] ?? '')),
+            'license_url' => trim((string) ($meta['license_url'] ?? '')),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function defaultMediaMeta(): array
+    {
+        return [
+            'alt' => '',
+            'caption' => '',
+            'focal_point' => ['x' => 0.5, 'y' => 0.5],
+            'copyright' => '',
+            'license_url' => '',
+        ];
     }
 
     private function resolveUrl(string $path): string

@@ -22,6 +22,8 @@ export const settings = writable({});
 
 export const security = writable({
   twofaEnabled: false,
+  role: 'owner',
+  permissions: [],
   twofaSecret: '',
   twofaUri: '',
   auditEntries: []

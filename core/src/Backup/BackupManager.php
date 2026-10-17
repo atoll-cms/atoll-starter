@@ -11,6 +11,7 @@ final class BackupManager
 {
     /** @var array<string, mixed> */
     private array $config;
+    private string $schedulerStateFile;
 
     public function __construct(
         private readonly string $sourceDir,
@@ -18,6 +19,8 @@ final class BackupManager
         array $config = []
     ) {
         $this->config = $config;
+        $siteRoot = dirname($this->sourceDir);
+        $this->schedulerStateFile = rtrim($siteRoot, '/') . '/content/data/backup-scheduler.json';
         if (!is_dir($this->backupDir)) {
             mkdir($this->backupDir, 0775, true);
         }
@@ -96,6 +99,122 @@ final class BackupManager
             'uploads' => $uploads,
             'file' => '/backups/' . $filename,
             'path' => $path,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function schedulerStatus(): array
+    {
+        $schedule = $this->normalizedSchedule();
+        $state = $this->loadSchedulerState();
+        $now = new \DateTimeImmutable('now', $this->timezone());
+        $lastSlot = $this->lastScheduledSlot($now, $schedule);
+        $nextSlot = $this->nextScheduledSlot($now, $schedule);
+
+        $lastSuccessAt = trim((string) ($state['last_success_at'] ?? ''));
+        $lastSuccessTs = $lastSuccessAt !== '' ? strtotime($lastSuccessAt) : false;
+        $due = (bool) $schedule['enabled'];
+        if ($due && $lastSlot !== null) {
+            $due = $lastSuccessTs === false || $lastSuccessTs < $lastSlot->getTimestamp();
+        }
+        $nextDueAt = (bool) $schedule['enabled'] ? ($nextSlot?->format('c') ?? '') : '';
+
+        return [
+            'enabled' => (bool) $schedule['enabled'],
+            'frequency' => (string) $schedule['frequency'],
+            'time' => (string) $schedule['time'],
+            'weekday' => (int) $schedule['weekday'],
+            'timezone' => $this->timezone()->getName(),
+            'due' => $due,
+            'last_run_at' => (string) ($state['last_run_at'] ?? ''),
+            'last_success_at' => $lastSuccessAt,
+            'last_error_at' => (string) ($state['last_error_at'] ?? ''),
+            'last_error' => (string) ($state['last_error'] ?? ''),
+            'last_duration_ms' => (int) ($state['last_duration_ms'] ?? 0),
+            'last_target' => (string) ($state['last_target'] ?? ''),
+            'last_file' => (string) ($state['last_file'] ?? ''),
+            'next_due_at' => $nextDueAt,
+            'runs' => is_array($state['runs'] ?? null) ? array_values($state['runs']) : [],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function runScheduled(bool $force = false): array
+    {
+        $status = $this->schedulerStatus();
+        if (!$force && !($status['enabled'] ?? false)) {
+            return [
+                'ok' => false,
+                'skipped' => true,
+                'reason' => 'disabled',
+                'status' => $status,
+            ];
+        }
+        if (!$force && !($status['due'] ?? false)) {
+            return [
+                'ok' => true,
+                'skipped' => true,
+                'reason' => 'not_due',
+                'status' => $status,
+            ];
+        }
+
+        $startedAt = date('c');
+        $start = microtime(true);
+        $result = $this->create();
+        $durationMs = (int) round((microtime(true) - $start) * 1000);
+        $ok = (bool) ($result['ok'] ?? false);
+        $target = $this->targetSummary($result);
+        $error = '';
+        if (!$ok) {
+            $error = trim((string) ($result['error'] ?? 'Backup failed'));
+        } elseif ((bool) ($result['partial'] ?? false)) {
+            $error = implode('; ', array_map('strval', $result['errors'] ?? []));
+        }
+
+        $state = $this->loadSchedulerState();
+        $state['last_run_at'] = $startedAt;
+        $state['last_duration_ms'] = $durationMs;
+        $state['last_target'] = $target;
+        $state['last_file'] = (string) ($result['file'] ?? '');
+        if ($ok) {
+            $state['last_success_at'] = $startedAt;
+            if ($error !== '') {
+                $state['last_error_at'] = $startedAt;
+                $state['last_error'] = $error;
+            } else {
+                $state['last_error_at'] = '';
+                $state['last_error'] = '';
+            }
+        } else {
+            $state['last_error_at'] = $startedAt;
+            $state['last_error'] = $error;
+        }
+
+        $runs = is_array($state['runs'] ?? null) ? array_values($state['runs']) : [];
+        array_unshift($runs, [
+            'started_at' => $startedAt,
+            'ok' => $ok,
+            'partial' => (bool) ($result['partial'] ?? false),
+            'duration_ms' => $durationMs,
+            'target' => $target,
+            'file' => (string) ($result['file'] ?? ''),
+            'error' => $error,
+        ]);
+        $state['runs'] = array_slice($runs, 0, 30);
+        $this->writeSchedulerState($state);
+
+        return [
+            ...$result,
+            'skipped' => false,
+            'started_at' => $startedAt,
+            'duration_ms' => $durationMs,
+            'target' => $target,
+            'status' => $this->schedulerStatus(),
         ];
     }
 
@@ -287,5 +406,126 @@ final class BackupManager
         $kRegion = hash_hmac('sha256', $region, $kDate, true);
         $kService = hash_hmac('sha256', $service, $kRegion, true);
         return hash_hmac('sha256', 'aws4_request', $kService, true);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function normalizedSchedule(): array
+    {
+        $schedule = Config::get($this->config, 'backup.schedule', []);
+        if (!is_array($schedule)) {
+            $schedule = [];
+        }
+
+        $frequency = strtolower(trim((string) ($schedule['frequency'] ?? 'daily')));
+        if (!in_array($frequency, ['daily', 'weekly'], true)) {
+            $frequency = 'daily';
+        }
+
+        $time = trim((string) ($schedule['time'] ?? '03:00'));
+        if (!preg_match('/^\d{2}:\d{2}$/', $time)) {
+            $time = '03:00';
+        }
+
+        $weekday = (int) ($schedule['weekday'] ?? 1);
+        if ($weekday < 1 || $weekday > 7) {
+            $weekday = 1;
+        }
+
+        return [
+            'enabled' => (bool) ($schedule['enabled'] ?? false),
+            'frequency' => $frequency,
+            'time' => $time,
+            'weekday' => $weekday,
+        ];
+    }
+
+    private function timezone(): \DateTimeZone
+    {
+        $tz = trim((string) Config::get($this->config, 'timezone', date_default_timezone_get()));
+        try {
+            return new \DateTimeZone($tz !== '' ? $tz : date_default_timezone_get());
+        } catch (\Throwable) {
+            return new \DateTimeZone(date_default_timezone_get());
+        }
+    }
+
+    private function lastScheduledSlot(\DateTimeImmutable $now, array $schedule): ?\DateTimeImmutable
+    {
+        [$hour, $minute] = array_map('intval', explode(':', (string) ($schedule['time'] ?? '03:00')));
+        if (($schedule['frequency'] ?? 'daily') === 'weekly') {
+            $weekday = (int) ($schedule['weekday'] ?? 1);
+            $currentDow = (int) $now->format('N');
+            $delta = $weekday - $currentDow;
+            $slot = $now->modify(($delta >= 0 ? '+' : '') . $delta . ' days')->setTime($hour, $minute);
+            if ($slot > $now) {
+                $slot = $slot->modify('-7 days');
+            }
+            return $slot;
+        }
+
+        $slot = $now->setTime($hour, $minute);
+        if ($slot > $now) {
+            $slot = $slot->modify('-1 day');
+        }
+        return $slot;
+    }
+
+    private function nextScheduledSlot(\DateTimeImmutable $now, array $schedule): ?\DateTimeImmutable
+    {
+        $last = $this->lastScheduledSlot($now, $schedule);
+        if ($last === null) {
+            return null;
+        }
+        if (($schedule['frequency'] ?? 'daily') === 'weekly') {
+            return $last->modify('+7 days');
+        }
+        return $last->modify('+1 day');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function loadSchedulerState(): array
+    {
+        if (!is_file($this->schedulerStateFile)) {
+            return [];
+        }
+
+        $decoded = json_decode((string) file_get_contents($this->schedulerStateFile), true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @param array<string, mixed> $state
+     */
+    private function writeSchedulerState(array $state): void
+    {
+        if (!is_dir(dirname($this->schedulerStateFile))) {
+            mkdir(dirname($this->schedulerStateFile), 0775, true);
+        }
+        file_put_contents($this->schedulerStateFile, json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function targetSummary(array $result): string
+    {
+        $targets = ['local'];
+        foreach (($result['uploads'] ?? []) as $upload) {
+            if (!is_array($upload) || !(bool) ($upload['ok'] ?? false)) {
+                continue;
+            }
+            $target = trim((string) ($upload['target'] ?? ''));
+            if ($target !== '') {
+                $targets[] = $target;
+            }
+        }
+
+        $targets = array_values(array_unique($targets));
+        sort($targets);
+        return implode('+', $targets);
     }
 }

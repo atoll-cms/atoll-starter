@@ -12,6 +12,8 @@ use Atoll\Support\Yaml;
 final class ContentRepository
 {
     private ?SqliteContentIndex $index = null;
+    private bool $revisionsEnabled = true;
+    private int $revisionMaxPerEntry = 20;
 
     /**
      * @param array<string, mixed> $config
@@ -22,6 +24,9 @@ final class ContentRepository
         array $config = [],
         ?string $siteRoot = null
     ) {
+        $this->revisionsEnabled = (bool) Config::get($config, 'content.revisions.enabled', true);
+        $this->revisionMaxPerEntry = max(1, (int) Config::get($config, 'content.revisions.max_per_entry', 20));
+
         $indexConfig = Config::get($config, 'content.index', []);
         if (!is_array($indexConfig) || !(bool) ($indexConfig['enabled'] ?? false)) {
             return;
@@ -53,6 +58,9 @@ final class ContentRepository
         foreach ($dirs as $dir) {
             $name = basename($dir);
             if ($name === 'data' || $name === 'forms' || $name === 'forms-submissions') {
+                continue;
+            }
+            if (str_starts_with($name, '.')) {
                 continue;
             }
             $collections[] = $name;
@@ -258,7 +266,7 @@ final class ContentRepository
     }
 
     /** @param array<string, mixed> $frontmatter */
-    public function save(string $collection, string $id, array $frontmatter, string $markdown): string
+    public function save(string $collection, string $id, array $frontmatter, string $markdown, ?string $actor = null): string
     {
         $collection = trim($collection, '/');
         $id = trim($id, '/');
@@ -273,6 +281,7 @@ final class ContentRepository
         $file = $dir . '/' . $id . '.md';
         $payload = "---\n" . Yaml::dump($frontmatter) . "---\n\n" . trim($markdown) . "\n";
         file_put_contents($file, $payload);
+        $this->storeRevisionSnapshot($collection, $id, $payload, 'save', $actor);
 
         if ($this->index !== null) {
             $this->index->upsertFile($collection, $file);
@@ -295,6 +304,9 @@ final class ContentRepository
             return false;
         }
 
+        $raw = (string) file_get_contents($file);
+        $this->storeRevisionSnapshot(trim($collection, '/'), trim($id, '/'), $raw, 'delete', null);
+
         $deleted = unlink($file);
         if ($deleted) {
             if ($this->index !== null) {
@@ -304,6 +316,126 @@ final class ContentRepository
         }
 
         return $deleted;
+    }
+
+    /**
+     * @return array<int, array{id:string,created_at:string,user:string,reason:string,size:int}>
+     */
+    public function listRevisions(string $collection, string $id, int $limit = 20): array
+    {
+        $collection = trim($collection, '/');
+        $id = trim($id, '/');
+        if ($collection === '' || $id === '') {
+            return [];
+        }
+
+        $limit = max(1, min(200, $limit));
+        $dir = $this->revisionEntryDir($collection, $id);
+        if (!is_dir($dir)) {
+            return [];
+        }
+
+        $rows = [];
+        foreach (glob($dir . '/*.md') ?: [] as $file) {
+            $revisionId = pathinfo($file, PATHINFO_FILENAME);
+            if ($revisionId === '') {
+                continue;
+            }
+
+            $meta = $this->readRevisionMeta($collection, $id, $revisionId);
+            $createdAt = (string) ($meta['created_at'] ?? gmdate('c', (int) @filemtime($file)));
+            $rows[] = [
+                'id' => $revisionId,
+                'created_at' => $createdAt,
+                'user' => (string) ($meta['user'] ?? ''),
+                'reason' => (string) ($meta['reason'] ?? 'save'),
+                'size' => (int) @filesize($file),
+            ];
+        }
+
+        usort($rows, static fn (array $a, array $b): int => strcmp((string) ($b['created_at'] ?? ''), (string) ($a['created_at'] ?? '')));
+        return array_slice($rows, 0, $limit);
+    }
+
+    /**
+     * @return array{id:string,created_at:string,user:string,reason:string,size:int,frontmatter:array<string,mixed>,markdown:string}|null
+     */
+    public function getRevision(string $collection, string $id, string $revisionId): ?array
+    {
+        $collection = trim($collection, '/');
+        $id = trim($id, '/');
+        $revisionId = trim($revisionId);
+        if ($collection === '' || $id === '' || $revisionId === '') {
+            return null;
+        }
+
+        $file = $this->revisionFilePath($collection, $id, $revisionId);
+        if (!is_file($file)) {
+            return null;
+        }
+
+        $raw = (string) file_get_contents($file);
+        [$frontmatter, $markdown] = $this->splitFrontmatter($raw);
+        $meta = $this->readRevisionMeta($collection, $id, $revisionId);
+
+        return [
+            'id' => $revisionId,
+            'created_at' => (string) ($meta['created_at'] ?? gmdate('c', (int) @filemtime($file))),
+            'user' => (string) ($meta['user'] ?? ''),
+            'reason' => (string) ($meta['reason'] ?? 'save'),
+            'size' => (int) @filesize($file),
+            'frontmatter' => $frontmatter,
+            'markdown' => $markdown,
+        ];
+    }
+
+    public function restoreRevision(string $collection, string $id, string $revisionId, ?string $actor = null): ?string
+    {
+        $collection = trim($collection, '/');
+        $id = trim($id, '/');
+        $revisionId = trim($revisionId);
+        if ($collection === '' || $id === '' || $revisionId === '') {
+            return null;
+        }
+
+        $revisionFile = $this->revisionFilePath($collection, $id, $revisionId);
+        if (!is_file($revisionFile)) {
+            return null;
+        }
+        $restoredRaw = (string) file_get_contents($revisionFile);
+        if (trim($restoredRaw) === '') {
+            return null;
+        }
+
+        $collectionDir = $this->contentRoot . '/' . $collection;
+        if (!is_dir($collectionDir)) {
+            mkdir($collectionDir, 0775, true);
+        }
+
+        $targetFile = $collectionDir . '/' . $id . '.md';
+        if (is_file($targetFile)) {
+            $currentRaw = (string) file_get_contents($targetFile);
+            $this->storeRevisionSnapshot($collection, $id, $currentRaw, 'pre_restore', $actor);
+        }
+
+        file_put_contents($targetFile, $restoredRaw);
+        $this->storeRevisionSnapshot($collection, $id, $restoredRaw, 'restore', $actor);
+
+        if ($this->index !== null) {
+            $this->index->upsertFile($collection, $targetFile);
+        }
+
+        [$frontmatter, ] = $this->splitFrontmatter($restoredRaw);
+        $this->hooks->run('content:save', [
+            'collection' => $collection,
+            'id' => $id,
+            'file' => $targetFile,
+            'frontmatter' => $frontmatter,
+            'restored_from' => $revisionId,
+            'restored_by' => $actor,
+        ]);
+
+        return $targetFile;
     }
 
     /** @return array<int, Page> */
@@ -350,7 +482,7 @@ final class ContentRepository
         }
 
         $filename = pathinfo($path, PATHINFO_FILENAME);
-        $slug = $this->slugFromFilename($collection, $filename);
+        $slug = $this->slugFromFilename($collection, $filename, $frontmatter);
 
         $url = $forcedUrl;
         if ($url === null) {
@@ -500,8 +632,20 @@ final class ContentRepository
         return [is_array($frontmatter) ? $frontmatter : [], $matches[2]];
     }
 
-    private function slugFromFilename(string $collection, string $filename): string
+    /**
+     * @param array<string, mixed> $frontmatter
+     */
+    private function slugFromFilename(string $collection, string $filename, array $frontmatter = []): string
     {
+        $explicitSlug = trim((string) ($frontmatter['slug'] ?? ''));
+        if ($explicitSlug !== '') {
+            $normalized = strtolower((string) preg_replace('/[^a-z0-9]+/i', '-', $explicitSlug));
+            $normalized = trim($normalized, '-');
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
         $meta = $this->collectionMeta($collection);
         $slugSource = (string) ($meta['slug_from'] ?? 'filename');
         if ($slugSource !== 'filename') {
@@ -689,5 +833,107 @@ final class ContentRepository
         }
 
         return preg_match('/^[A-Za-z]:[\\\\\\/]/', $path) === 1;
+    }
+
+    /**
+     * @param array<string, mixed> $meta
+     */
+    private function writeRevisionMeta(string $collection, string $id, string $revisionId, array $meta): void
+    {
+        $file = $this->revisionMetaPath($collection, $id, $revisionId);
+        file_put_contents($file, json_encode($meta, JSON_UNESCAPED_SLASHES));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function readRevisionMeta(string $collection, string $id, string $revisionId): array
+    {
+        $file = $this->revisionMetaPath($collection, $id, $revisionId);
+        if (!is_file($file)) {
+            return [];
+        }
+
+        $decoded = json_decode((string) file_get_contents($file), true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private function storeRevisionSnapshot(string $collection, string $id, string $raw, string $reason, ?string $actor): void
+    {
+        if (!$this->revisionsEnabled) {
+            return;
+        }
+
+        $collection = trim($collection, '/');
+        $id = trim($id, '/');
+        if ($collection === '' || $id === '' || trim($raw) === '') {
+            return;
+        }
+
+        $dir = $this->revisionEntryDir($collection, $id);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        try {
+            $suffix = bin2hex(random_bytes(4));
+        } catch (\Throwable) {
+            $suffix = (string) mt_rand(1000, 9999);
+        }
+
+        $revisionId = gmdate('Ymd_His') . '_' . $suffix;
+        $revisionFile = $this->revisionFilePath($collection, $id, $revisionId);
+        file_put_contents($revisionFile, $raw);
+        $this->writeRevisionMeta($collection, $id, $revisionId, [
+            'id' => $revisionId,
+            'collection' => $collection,
+            'entry_id' => $id,
+            'created_at' => gmdate('c'),
+            'user' => trim((string) ($actor ?? '')),
+            'reason' => $reason,
+            'size' => (int) @filesize($revisionFile),
+        ]);
+
+        $this->enforceRevisionRetention($collection, $id);
+    }
+
+    private function enforceRevisionRetention(string $collection, string $id): void
+    {
+        if (!$this->revisionsEnabled) {
+            return;
+        }
+
+        $max = max(1, $this->revisionMaxPerEntry);
+        $files = glob($this->revisionEntryDir($collection, $id) . '/*.md') ?: [];
+        rsort($files, SORT_STRING);
+        if (count($files) <= $max) {
+            return;
+        }
+
+        $toDelete = array_slice($files, $max);
+        foreach ($toDelete as $file) {
+            $revisionId = pathinfo($file, PATHINFO_FILENAME);
+            @unlink($file);
+            @unlink($this->revisionMetaPath($collection, $id, $revisionId));
+        }
+    }
+
+    private function revisionEntryDir(string $collection, string $id): string
+    {
+        $collection = rawurlencode(trim($collection, '/'));
+        $id = rawurlencode(trim($id, '/'));
+        return $this->contentRoot . '/.revisions/' . $collection . '/' . $id;
+    }
+
+    private function revisionFilePath(string $collection, string $id, string $revisionId): string
+    {
+        $revisionId = basename(trim($revisionId));
+        return $this->revisionEntryDir($collection, $id) . '/' . $revisionId . '.md';
+    }
+
+    private function revisionMetaPath(string $collection, string $id, string $revisionId): string
+    {
+        $revisionId = basename(trim($revisionId));
+        return $this->revisionEntryDir($collection, $id) . '/' . $revisionId . '.json';
     }
 }

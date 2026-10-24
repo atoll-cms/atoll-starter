@@ -5,6 +5,7 @@
   let installSource = $state('');
   let busy = $state({});
   let licenseByTheme = $state({});
+  let buyerByTheme = $state({});
 
   function normalizePreview(value) {
     const raw = String(value || '').trim();
@@ -20,6 +21,28 @@
   function priceLabel(row) {
     const value = Number(row?.price_eur ?? 0);
     return Number.isFinite(value) && value > 0 ? `${value.toFixed(0)} EUR` : 'Kostenlos';
+  }
+
+  function needsLicense(row) {
+    return !!row?.requires_license;
+  }
+
+  function hasUsableLicense(row) {
+    if (!row?.has_license) return false;
+    return row?.license_valid !== false;
+  }
+
+  function isPaid(row) {
+    const value = Number(row?.price_eur ?? 0);
+    return Number.isFinite(value) && value > 0;
+  }
+
+  function licenseWarning(row) {
+    if (row?.license_valid === false) {
+      const reason = String(row?.license_reason || 'invalid');
+      return `Gespeicherte Lizenz ist ungueltig (${reason}).`;
+    }
+    return '';
   }
 
   function buildCatalog(installed, registry) {
@@ -39,6 +62,8 @@
         seller: item.seller || 'Community',
         requires_license: !!item.requires_license,
         has_license: !!item.has_license,
+        license_valid: item.license_valid,
+        license_reason: item.license_reason || '',
         checkout_url: item.checkout_url || ''
       });
     }
@@ -55,6 +80,8 @@
         seller: item.source === 'core' ? 'atoll-cms' : 'Site',
         requires_license: false,
         has_license: false,
+        license_valid: null,
+        license_reason: '',
         checkout_url: ''
       };
 
@@ -109,7 +136,7 @@
     if (!id || busy[id]) return;
 
     const licenseKey = String(licenseByTheme[id] || '').trim();
-    if (row?.requires_license && !row?.has_license && licenseKey === '') {
+    if (needsLicense(row) && !hasUsableLicense(row) && licenseKey === '') {
       addToast('Dieses Theme benoetigt einen Lizenzschluessel.', 'error');
       return;
     }
@@ -131,6 +158,44 @@
       addToast(err.message, 'error');
     } finally {
       setBusy(id, false);
+    }
+  }
+
+  async function purchaseThemeLicense(row) {
+    const id = row?.id;
+    if (!id || busy[`purchase-${id}`]) return;
+
+    const buyer = buyerByTheme[id] || {};
+    const buyerEmail = String(buyer?.email || '').trim();
+    const buyerName = String(buyer?.name || '').trim();
+    if (buyerEmail === '') {
+      addToast('Bitte eine Buyer-E-Mail eingeben.', 'error');
+      return;
+    }
+
+    setBusy(`purchase-${id}`, true);
+    try {
+      const result = await api('/admin/api/marketplace/purchase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'theme',
+          id,
+          buyer_email: buyerEmail,
+          buyer_name: buyerName
+        })
+      });
+
+      const key = String(result?.purchase?.license_key || '').trim();
+      if (key !== '') {
+        licenseByTheme = { ...licenseByTheme, [id]: key };
+      }
+      await refreshThemeData();
+      addToast('Lizenz gekauft und gespeichert.', 'success');
+    } catch (err) {
+      addToast(err.message, 'error');
+    } finally {
+      setBusy(`purchase-${id}`, false);
     }
   }
 
@@ -229,7 +294,11 @@
 
             <div class="theme-actions">
               {#if !t.installed}
-                {#if t.requires_license && !t.has_license}
+                {#if needsLicense(t) && licenseWarning(t) !== ''}
+                  <p class="license-warning">{licenseWarning(t)}</p>
+                {/if}
+
+                {#if needsLicense(t) && !hasUsableLicense(t)}
                   <input
                     class="license-input"
                     type="text"
@@ -240,6 +309,43 @@
                       licenseByTheme = { ...licenseByTheme, [t.id]: value };
                     }}
                   >
+                {/if}
+
+                {#if isPaid(t) && (!needsLicense(t) || !hasUsableLicense(t))}
+                  <div class="buyer-grid">
+                    <input
+                      class="license-input"
+                      type="text"
+                      placeholder="Buyer name (optional)"
+                      value={buyerByTheme[t.id]?.name || ''}
+                      oninput={(event) => {
+                        const value = event.currentTarget?.value || '';
+                        buyerByTheme = {
+                          ...buyerByTheme,
+                          [t.id]: { ...(buyerByTheme[t.id] || {}), name: value }
+                        };
+                      }}
+                    >
+                    <input
+                      class="license-input"
+                      type="email"
+                      placeholder="Buyer email"
+                      value={buyerByTheme[t.id]?.email || ''}
+                      oninput={(event) => {
+                        const value = event.currentTarget?.value || '';
+                        buyerByTheme = {
+                          ...buyerByTheme,
+                          [t.id]: { ...(buyerByTheme[t.id] || {}), email: value }
+                        };
+                      }}
+                    >
+                  </div>
+                {/if}
+
+                {#if isPaid(t) && (!needsLicense(t) || !hasUsableLicense(t))}
+                  <button class="btn btn--buy" disabled={!!busy[`purchase-${t.id}`]} onclick={() => purchaseThemeLicense(t)}>
+                    {busy[`purchase-${t.id}`] ? 'Kaufe...' : 'Kaufen & Lizenz'}
+                  </button>
                 {/if}
 
                 <button class="btn btn--primary" disabled={!!busy[t.id]} onclick={() => installFromRegistry(t)}>
@@ -457,6 +563,18 @@
     align-items: center;
   }
 
+  .buyer-grid {
+    width: 100%;
+    display: grid;
+    gap: 0.45rem;
+  }
+
+  .license-warning {
+    margin: 0;
+    color: #fda4af;
+    font-size: 0.78rem;
+  }
+
   .license-input {
     width: 100%;
     padding: 0.45rem 0.6rem;
@@ -505,6 +623,16 @@
   .btn--danger:hover {
     border-color: #f87171;
     color: #fecdd3;
+  }
+
+  .btn--buy {
+    border-color: rgba(34, 197, 94, 0.45);
+    color: #86efac;
+  }
+
+  .btn--buy:hover {
+    border-color: rgba(34, 197, 94, 0.65);
+    color: #bbf7d0;
   }
 
   .btn:disabled {

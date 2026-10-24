@@ -1,58 +1,186 @@
 <script>
-  import { submissions, addToast } from '../lib/stores.js';
+  import { onMount } from 'svelte';
+  import { addToast } from '../lib/stores.js';
   import { api } from '../lib/api.js';
 
-  let loadingSubmissions = $state(false);
+  let rows = $state([]);
+  let forms = $state([]);
+  let loading = $state(false);
+  let updatingStatus = $state({});
+
+  let selectedForm = $state('all');
+  let selectedStatus = $state('all');
+  let searchQuery = $state('');
+  let dateFrom = $state('');
+  let dateTo = $state('');
+
+  onMount(async () => {
+    await loadSubmissions();
+  });
 
   async function loadSubmissions() {
-    loadingSubmissions = true;
+    loading = true;
     try {
-      const data = await api('/admin/api/forms/submissions?name=contact');
-      submissions.set(data.submissions || []);
-      addToast(`${(data.submissions || []).length} Submissions geladen.`, 'info');
+      const params = new URLSearchParams();
+      params.set('name', selectedForm || 'all');
+      params.set('status', selectedStatus || 'all');
+      if (searchQuery.trim() !== '') params.set('q', searchQuery.trim());
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
+      params.set('limit', '1000');
+
+      const data = await api(`/admin/api/forms/submissions?${params.toString()}`);
+      rows = Array.isArray(data?.submissions) ? data.submissions : [];
+      forms = Array.isArray(data?.forms) ? data.forms : [];
+
+      if (selectedForm !== 'all' && selectedForm !== '' && !forms.includes(selectedForm)) {
+        selectedForm = 'all';
+      }
     } catch (err) {
-      addToast(err.message, 'error');
+      addToast(err?.message || 'Submissions konnten nicht geladen werden.', 'error');
     } finally {
-      loadingSubmissions = false;
+      loading = false;
     }
+  }
+
+  async function setStatus(row, status) {
+    if (!row?.id || !row?.form || !status) return;
+    const key = `${row.form}:${row.id}`;
+    if (updatingStatus[key]) return;
+
+    updatingStatus = { ...updatingStatus, [key]: true };
+    try {
+      await api('/admin/api/forms/submissions/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          form: row.form,
+          id: row.id,
+          status
+        })
+      });
+      rows = rows.map((entry) => (
+        entry.id === row.id && entry.form === row.form
+          ? { ...entry, status }
+          : entry
+      ));
+      addToast('Status aktualisiert.', 'success');
+    } catch (err) {
+      addToast(err?.message || 'Status konnte nicht gespeichert werden.', 'error');
+    } finally {
+      updatingStatus = { ...updatingStatus, [key]: false };
+    }
+  }
+
+  function exportCsv() {
+    const params = new URLSearchParams();
+    params.set('name', selectedForm || 'all');
+    params.set('status', selectedStatus || 'all');
+    if (searchQuery.trim() !== '') params.set('q', searchQuery.trim());
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
+    params.set('limit', '5000');
+
+    window.open(`/admin/api/forms/submissions/export?${params.toString()}`, '_blank', 'noopener');
+  }
+
+  function payloadPreview(payload) {
+    if (!payload || typeof payload !== 'object') return '';
+    const entries = Object.entries(payload).slice(0, 4);
+    return entries.map(([k, v]) => `${k}: ${String(v)}`).join(' · ');
   }
 </script>
 
 <div class="forms-view">
   <div class="page-header">
-    <h1>Forms</h1>
-    <button class="load-btn" onclick={loadSubmissions} disabled={loadingSubmissions}>
-      {loadingSubmissions ? 'Laden...' : 'Kontakt-Submissions laden'}
-    </button>
+    <h1>Forms Inbox</h1>
+    <p>CRM-lite Workflow fuer eingehende Formulare.</p>
   </div>
 
-  {#if $submissions.length > 0}
-    <div class="submissions-list">
-      {#each $submissions as row}
-        <div class="submission-card">
-          <div class="submission-time">{row.timestamp || ''}</div>
-          <pre class="submission-payload">{JSON.stringify(row.payload || {}, null, 2)}</pre>
-        </div>
+  <div class="filters">
+    <select bind:value={selectedForm}>
+      <option value="all">Alle Formulare</option>
+      {#each forms as name}
+        <option value={name}>{name}</option>
       {/each}
-    </div>
-  {:else}
-    <div class="empty-state">
-      <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-      <p>Klicke auf "Laden" um Submissions anzuzeigen.</p>
-    </div>
-  {/if}
+    </select>
+
+    <select bind:value={selectedStatus}>
+      <option value="all">Alle Status</option>
+      <option value="new">Neu</option>
+      <option value="in-progress">In Bearbeitung</option>
+      <option value="done">Erledigt</option>
+    </select>
+
+    <input type="date" bind:value={dateFrom}>
+    <input type="date" bind:value={dateTo}>
+    <input type="text" bind:value={searchQuery} placeholder="Suche (ID, Formular, Felder)">
+
+    <button class="action-btn" onclick={loadSubmissions} disabled={loading}>
+      {loading ? 'Lade...' : 'Filtern'}
+    </button>
+    <button class="action-btn" onclick={exportCsv}>CSV Export</button>
+  </div>
+
+  <div class="section-card">
+    {#if rows.length === 0}
+      <div class="empty-state">
+        <p>Keine Submissions fuer die aktuelle Filterung.</p>
+      </div>
+    {:else}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Zeit</th>
+              <th>Formular</th>
+              <th>Payload</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each rows as row}
+              {@const rowKey = `${row.form}:${row.id}`}
+              <tr>
+                <td>
+                  <div class="timestamp">{row.timestamp || ''}</div>
+                  <code>{row.id}</code>
+                </td>
+                <td>{row.form}</td>
+                <td>
+                  <div class="payload-preview">{payloadPreview(row.payload)}</div>
+                  <details>
+                    <summary>Details</summary>
+                    <pre>{JSON.stringify(row.payload || {}, null, 2)}</pre>
+                  </details>
+                </td>
+                <td>
+                  <select
+                    value={row.status || 'new'}
+                    onchange={(event) => setStatus(row, event.currentTarget?.value || 'new')}
+                    disabled={!!updatingStatus[rowKey]}
+                  >
+                    <option value="new">Neu</option>
+                    <option value="in-progress">In Bearbeitung</option>
+                    <option value="done">Erledigt</option>
+                  </select>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
   .forms-view {
-    max-width: 900px;
+    max-width: 1200px;
   }
 
   .page-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
   }
 
   .page-header h1 {
@@ -62,66 +190,150 @@
     letter-spacing: -0.02em;
   }
 
-  .load-btn {
-    padding: 0.5rem 1rem;
+  .page-header p {
+    margin-top: 0.25rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: 170px 170px 150px 150px 1fr auto auto;
+    gap: 0.55rem;
+    margin-bottom: 1rem;
+  }
+
+  .filters select,
+  .filters input {
+    width: 100%;
+    padding: 0.45rem 0.55rem;
     background: var(--surface);
     border: 1px solid var(--line);
     border-radius: 8px;
     color: var(--text);
     font: inherit;
     font-size: 0.85rem;
-    font-weight: 500;
+  }
+
+  .action-btn {
+    padding: 0.45rem 0.72rem;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.8rem;
     cursor: pointer;
-    transition: all 0.15s;
   }
 
-  .load-btn:hover:not(:disabled) {
+  .action-btn:hover {
     border-color: var(--brand);
-    background: var(--surface-2);
+    color: var(--brand);
   }
 
-  .submissions-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+  .action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
-  .submission-card {
+  .section-card {
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 1rem;
+    border-radius: 14px;
+    overflow: hidden;
   }
 
-  .submission-time {
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th, td {
+    padding: 0.7rem 1rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+  }
+
+  td {
+    border-bottom: 1px solid var(--line);
+    font-size: 0.86rem;
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+
+  td code {
+    display: inline-block;
+    margin-top: 0.25rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.1rem 0.35rem;
+    background: rgba(148, 163, 184, 0.14);
+    border-radius: 4px;
+  }
+
+  .timestamp {
     font-size: 0.8rem;
     color: var(--muted);
-    font-weight: 500;
-    margin-bottom: 0.5rem;
   }
 
-  .submission-payload {
-    font-family: 'JetBrains Mono', monospace;
+  .payload-preview {
     font-size: 0.8rem;
-    line-height: 1.5;
-    color: var(--text);
-    background: var(--bg);
-    padding: 0.75rem;
+    color: var(--muted);
+    line-height: 1.45;
+    margin-bottom: 0.35rem;
+  }
+
+  details summary {
+    cursor: pointer;
+    color: var(--brand);
+    font-size: 0.78rem;
+    user-select: none;
+  }
+
+  details pre {
+    margin-top: 0.4rem;
+    padding: 0.65rem;
     border-radius: 8px;
+    background: var(--bg);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
     overflow-x: auto;
-    margin: 0;
+  }
+
+  td select {
+    width: 100%;
+    padding: 0.45rem 0.5rem;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    font-size: 0.8rem;
   }
 
   .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 4rem 2rem;
+    padding: 2.4rem 1rem;
+    text-align: center;
     color: var(--muted);
-    gap: 1rem;
   }
 
-  .empty-state svg { opacity: 0.3; }
-  .empty-state p { font-size: 0.9rem; }
+  @media (max-width: 1080px) {
+    .filters {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
 </style>

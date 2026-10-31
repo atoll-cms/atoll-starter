@@ -4,6 +4,15 @@
   function navigate(view) {
     currentView.set(view);
   }
+
+  function widgetTone(widget) {
+    const value = String(widget?.value || '').trim().toLowerCase();
+    if (value === 'healthy') return 'ok';
+    if (value === 'due' || value === 'waiting') return 'warn';
+    if (value === 'error') return 'danger';
+    if (value === 'disabled') return 'muted';
+    return 'default';
+  }
 </script>
 
 <div class="dashboard">
@@ -89,11 +98,16 @@
   {#if $dashboardWidgets.length > 0}
     <div class="widget plugin-widget-block">
       <div class="widget-header">
-        <h3>Plugin Widgets</h3>
+        <h3>Widgets</h3>
       </div>
       <div class="plugin-widget-grid">
         {#each $dashboardWidgets as widget}
-          <article class="plugin-widget-card">
+          <article
+            class="plugin-widget-card"
+            class:plugin-widget-card--ok={widgetTone(widget) === 'ok'}
+            class:plugin-widget-card--warn={widgetTone(widget) === 'warn'}
+            class:plugin-widget-card--danger={widgetTone(widget) === 'danger'}
+            class:plugin-widget-card--muted={widgetTone(widget) === 'muted'}>
             <h4>{widget.title}</h4>
             {#if widget.value}
               <p class="plugin-widget-value">{widget.value}</p>
@@ -209,6 +223,27 @@
     border-radius: 10px;
     padding: 0.8rem;
     background: var(--surface-2);
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+  }
+
+  .plugin-widget-card--ok {
+    border-color: rgba(16, 185, 129, 0.45);
+    background: rgba(16, 185, 129, 0.08);
+  }
+
+  .plugin-widget-card--warn {
+    border-color: rgba(245, 158, 11, 0.45);
+    background: rgba(245, 158, 11, 0.1);
+  }
+
+  .plugin-widget-card--danger {
+    border-color: rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  .plugin-widget-card--muted {
+    border-color: rgba(138, 163, 168, 0.35);
+    background: rgba(138, 163, 168, 0.08);
   }
 
   .plugin-widget-card h4 {
@@ -222,6 +257,11 @@
     font-size: 1.2rem;
     font-weight: 700;
     line-height: 1.1;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .plugin-widget-text {

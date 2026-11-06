@@ -11,6 +11,7 @@
   import Content from './views/Content.svelte';
   import Media from './views/Media.svelte';
   import Forms from './views/Forms.svelte';
+  import Redirects from './views/Redirects.svelte';
   import Seo from './views/Seo.svelte';
   import Plugins from './views/Plugins.svelte';
   import Themes from './views/Themes.svelte';
@@ -25,7 +26,12 @@
       const me = await api('/admin/api/me');
       user.set(me.user);
       csrf.set(me.csrf);
-      security.update((s) => ({ ...s, twofaEnabled: !!me?.security?.twofa_enabled }));
+      security.update((s) => ({
+        ...s,
+        twofaEnabled: !!me?.security?.twofa_enabled,
+        role: String(me?.security?.role || 'owner'),
+        permissions: Array.isArray(me?.security?.permissions) ? me.security.permissions : []
+      }));
 
       const [col, plug, plugReg, thm, thmReg, menuData, widgetData, sett, audit] = await Promise.all([
         api('/admin/api/collections'),
@@ -107,6 +113,8 @@
         <Media />
       {:else if $currentView === 'forms'}
         <Forms />
+      {:else if $currentView === 'redirects'}
+        <Redirects />
       {:else if $currentView === 'seo'}
         <Seo />
       {:else if $currentView === 'plugins'}
